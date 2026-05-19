@@ -502,8 +502,8 @@ mod tests {
 
     /// VM-005: ?chaos_status=500 query param produces an OpenAI-shaped JSON
     /// error envelope (provider error_template), not plain text or the
-    /// success body. Composes with the URL so gateways can register one
-    /// "broken" endpoint and another "healthy" endpoint against the same mock.
+    /// success body. Composes with the URL so a routing layer can register
+    /// one "broken" endpoint and another "healthy" endpoint against the same mock.
     #[tokio::test]
     async fn test_vm005_chaos_status_query_returns_provider_shape_error() {
         let app = create_app(get_test_config(), None, get_embedded_registry()).await;

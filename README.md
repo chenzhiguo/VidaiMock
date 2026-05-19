@@ -62,11 +62,11 @@ Plus: Tool calling (OpenAI `tool_calls` + Anthropic `tool_use` + Gemini `functio
 - **🔬 SDK-Level Wire Accuracy**: Streams survive strict SDK parsers end-to-end — `openai-python`, `anthropic`, `google-genai` all iterate the mock without hand-crafted compat shims. Text streaming, tool-call streaming, and agentic-loop streaming all emit single-line SSE JSON with correct typed events. Regression-tested byte-level against captured real-provider wire format.
 - **📝 Customizable**: YAML configs + Tera templates for any API
 
-## 🛡️ Built for Vidai.Server
+## 🛡️ Built for the Vidai AI Control Plane
 
-VidaiMock is the official development environment for [Vidai.Server](https://vidai.uk)—the **High-Density Enterprise AI Gateway**. 
+VidaiMock is the official development environment for the [Vidai AI Control Plane](https://vidai.uk) — a high-density, enterprise-grade control plane for LLM infrastructure.
 
-The same logic that powers VidaiMock's simulation of network jitter, latency, and failure modes is used in production to provide sovereign control planes for enterprise LLM infrastructure.
+The same logic that powers VidaiMock's simulation of network jitter, latency, and failure modes is used in production to keep the Vidai Control Plane resilient for enterprise LLM infrastructure.
 
 ### 🌊 More than a Mock
 Unlike tools that just record and replay static data or intercept browser requests, **VidaiMock is a standalone Simulation Engine**. It emulates the exact wire-format and per-token timing of LLM streaming payloads, making it the perfect tool for testing streaming UI/UX and SDK resilience.
@@ -235,8 +235,8 @@ curl -H "X-Mock-Status: 429" http://localhost:8100/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
 
 # ?chaos_status=503 URL query — stateless per-URL chaos.
-# Lets a gateway register one "broken" endpoint and one "healthy" endpoint
-# against the same mock instance for fallback/circuit-breaker testing.
+# Lets your routing layer register one "broken" endpoint and one "healthy"
+# endpoint against the same mock instance for fallback/circuit-breaker testing.
 curl "http://localhost:8100/v1/chat/completions?chaos_status=503" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
@@ -394,7 +394,7 @@ the same `error_template` pipeline:
 
 | Trigger | Scope | Use case |
 |---|---|---|
-| `?chaos_status=503` URL query | Per URL | Gateway registers one "broken" and one "healthy" endpoint against the same mock instance — fallback/circuit-breaker testing |
+| `?chaos_status=503` URL query | Per URL | Your routing layer registers one "broken" and one "healthy" endpoint against the same mock instance — fallback/circuit-breaker testing |
 | `X-Mock-Status: 429` header | Per request | SDK-level test wants a specific status on a real provider route |
 | `X-Vidai-Chaos-Drop: 100` header | Probabilistic | Chaos testing; returns provider-shaped 500 JSON |
 | Provider `status_code` Tera expression | Per request field | Request validation (e.g. Anthropic's `max_tokens` requirement) |

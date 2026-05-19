@@ -162,7 +162,7 @@ fn resolve_status_code(
     }
 
     // 3. Query-param override — server-controlled via URL registered in a
-    // gateway's provider-config. Lets one URL be "broken" and another
+    // routing layer's provider-config. Lets one URL be "broken" and another
     // "healthy" without per-request header forwarding.
     if let Some(val) = query_params.get("chaos_status") {
         if let Ok(code) = val.parse::<u16>() {
