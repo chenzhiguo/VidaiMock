@@ -11,7 +11,7 @@
 
 ```bash
 # Download and bundle (macOS Apple Silicon)
-curl -LO https://github.com/vidaiUK/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
+curl -LO https://github.com/chenzhiguo/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
 tar -xzf vidaimock-macos-arm64.tar.gz && cd vidaimock
 
 # Run and enjoy!
