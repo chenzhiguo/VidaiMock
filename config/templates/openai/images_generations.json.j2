@@ -10,7 +10,8 @@
   "created": {{ timestamp() }},
   "data": [
     {
-      {% if json.response_format == "b64_json" %}
+      {% set fmt = json.response_format | default(value="b64_json") %}
+      {% if fmt != "url" %}
       "b64_json": "{{ file_to_b64(path="openai/image/demo.jpg") }}"
       {% else %}
       "url": "https://mock.vidaimock.local/images/{{ uuid() }}.png",
@@ -18,7 +19,7 @@
       {% endif %}
     }
   ]
-  {% if json.response_format == "b64_json" %},
+  {% if fmt != "url" %},
   "usage": {
     "total_tokens": 100,
     "input_tokens": 50,
