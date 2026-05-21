@@ -1237,4 +1237,142 @@ mod tests {
             .join("\n");
         assert_data_frames_are_single_line_json(&body_without_done, "openai stream+tools");
     }
+
+    #[tokio::test]
+    async fn test_image_generation_non_streaming_b64() {
+        let mut config = get_test_config();
+        config.config_dir = PathBuf::from("config");
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.load_from_dir(&config.config_dir).unwrap();
+        let app = create_app(config, None, Arc::new(registry)).await;
+
+        let body = r#"{
+            "prompt": "a cute cat",
+            "response_format": "b64_json"
+        }"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/images/generations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        
+        let b64 = val["data"][0]["b64_json"].as_str().expect("b64_json field missing or not string");
+        assert!(b64.len() > 100);
+        
+        // Assert usage block
+        assert_eq!(val["usage"]["total_tokens"], 100);
+        assert_eq!(val["usage"]["input_tokens"], 50);
+        assert_eq!(val["usage"]["output_tokens"], 50);
+        assert_eq!(val["usage"]["input_tokens_details"]["text_tokens"], 10);
+        assert_eq!(val["usage"]["input_tokens_details"]["image_tokens"], 40);
+
+        // Ensure it is valid base64
+        use base64::prelude::*;
+        let decoded = BASE64_STANDARD.decode(b64).expect("Failed to decode base64");
+        assert_eq!(decoded.len(), 199910); // size of demo.jpg
+    }
+
+    #[tokio::test]
+    async fn test_image_generation_streaming_b64() {
+        let mut config = get_test_config();
+        config.config_dir = PathBuf::from("config");
+        let mut registry = crate::provider::ProviderRegistry::new();
+        registry.load_from_dir(&config.config_dir).unwrap();
+        let app = create_app(config, None, Arc::new(registry)).await;
+
+        let body = r#"{
+            "prompt": "a cute cat",
+            "response_format": "b64_json",
+            "stream": true
+        }"#;
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/images/generations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = String::from_utf8(drain_body(response).await).unwrap();
+        
+        let mut full_b64 = String::new();
+        let mut has_completed = false;
+        
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(lines.len() >= 2);
+        
+        let mut i = 0;
+        let mut expected_index = 0;
+        while i < lines.len() {
+            let event_line = lines[i];
+            let data_line = lines[i+1];
+            i += 2;
+            
+            assert!(event_line.starts_with("event: "), "Expected line starting with 'event: ', got: {}", event_line);
+            assert!(data_line.starts_with("data: "), "Expected line starting with 'data: ', got: {}", data_line);
+            
+            let event = &event_line["event: ".len()..];
+            let data_str = &data_line["data: ".len()..];
+            let data_json: serde_json::Value = serde_json::from_str(data_str).unwrap();
+            
+            if event == "image_generation.partial_image" {
+                assert_eq!(data_json["type"], "image_generation.partial_image");
+                let chunk_b64 = data_json["b64_json"].as_str().expect("b64_json missing");
+                let p_idx = data_json["partial_image_index"].as_u64().expect("partial_image_index missing");
+                assert_eq!(p_idx, expected_index);
+                expected_index += 1;
+                full_b64.push_str(chunk_b64);
+                
+                // Assert new fields per OpenAI spec
+                assert!(data_json["created_at"].as_u64().is_some(), "created_at missing in partial_image");
+                assert_eq!(data_json["size"], "1024x1024");
+                assert!(data_json["quality"].is_string(), "quality missing in partial_image");
+                assert!(data_json["background"].is_string(), "background missing in partial_image");
+                assert!(data_json["output_format"].is_string(), "output_format missing in partial_image");
+            } else if event == "image_generation.completed" {
+                assert_eq!(data_json["type"], "image_generation.completed");
+                has_completed = true;
+                
+                let full_b64_completed = data_json["b64_json"].as_str().expect("completed b64_json missing");
+                assert_eq!(full_b64_completed, full_b64);
+                
+                // Assert new fields per OpenAI spec
+                assert!(data_json["created_at"].as_u64().is_some(), "created_at missing in completed");
+                assert_eq!(data_json["size"], "1024x1024");
+                assert!(data_json["quality"].is_string(), "quality missing in completed");
+                assert!(data_json["background"].is_string(), "background missing in completed");
+                assert!(data_json["output_format"].is_string(), "output_format missing in completed");
+                
+                assert_eq!(data_json["usage"]["total_tokens"], 100);
+                assert_eq!(data_json["usage"]["input_tokens"], 50);
+                assert_eq!(data_json["usage"]["output_tokens"], 50);
+                assert_eq!(data_json["usage"]["input_tokens_details"]["text_tokens"], 10);
+                assert_eq!(data_json["usage"]["input_tokens_details"]["image_tokens"], 40);
+            } else {
+                panic!("Unexpected event type: {}", event);
+            }
+        }
+        
+        assert!(has_completed, "Stream did not end with completed event");
+        
+        use base64::prelude::*;
+        let decoded = BASE64_STANDARD.decode(&full_b64).expect("Failed to decode accumulated base64");
+        assert_eq!(decoded.len(), 199910); // size of demo.jpg
+    }
 }
+

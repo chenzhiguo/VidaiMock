@@ -436,16 +436,37 @@ pub async fn streaming_handler(
             // Extract content to stream
             // Support Tool Calls: extract_content returns Value
             let (content_val, has_tool_calls) = extract_content_value(&full_response);
+            if let Some(s) = content_val.as_str() {
+                base_context.insert("full_content", s);
+            } else {
+                base_context.insert("full_content", &content_val);
+            }
             
             let chunks: Vec<serde_json::Value> =
                 if has_tool_calls {
                     // If tool calls exist, send as a single chunk.
                     vec![content_val]
                 } else if let Some(s) = content_val.as_str() {
-                    // Otherwise, split the string content into chunks by whitespace (per-word chunked streaming).
-                    s.split_whitespace()
-                        .map(|w| serde_json::Value::String(format!("{} ", w)))
-                        .collect()
+                    if !s.contains(' ') && s.len() > 100 {
+                        // Continuous block without spaces (like base64 image data).
+                        // Split into fixed-size chunks (e.g., 10KB) to simulate streaming.
+                        let chunk_size = 10240;
+                        let mut temp_chunks = Vec::new();
+                        let mut chars = s.chars();
+                        loop {
+                            let chunk: String = chars.by_ref().take(chunk_size).collect();
+                            if chunk.is_empty() {
+                                break;
+                            }
+                            temp_chunks.push(serde_json::Value::String(chunk));
+                        }
+                        temp_chunks
+                    } else {
+                        // Otherwise, split the string content into chunks by whitespace (per-word chunked streaming).
+                        s.split_whitespace()
+                            .map(|w| serde_json::Value::String(format!("{} ", w)))
+                            .collect()
+                    }
                 } else {
                     // Fallback: single chunk if not string or not split-able.
                     vec![content_val]
@@ -525,7 +546,7 @@ pub async fn streaming_handler(
                         if let Some(on_start) = &lc.on_start {
                              // Context setup?
                              if let Some(tmpl) = &on_start.template_body {
-                                 Some(tera::Tera::one_off(tmpl, &ctx, false).unwrap_or_default())
+                                 Some(state.registry.render_str(tmpl, &ctx).unwrap_or_default())
                              } else if let Some(path) = &on_start.template_path {
                                  Some(state.registry.tera.render(path, &ctx).unwrap_or_default())
                              } else {
@@ -537,12 +558,13 @@ pub async fn streaming_handler(
                     // Chunk Event
                     let chunk = &chunks[idx-1];
                     ctx.insert("chunk", chunk);
+                    ctx.insert("chunk_index", &(idx - 1));
                     
                     if let Some(lc) = &lifecycle {
                         if let Some(on_chunk) = &lc.on_chunk {
                              // Context already has "chunk"
                              if let Some(tmpl) = &on_chunk.template_body {
-                                 Some(tera::Tera::one_off(tmpl, &ctx, false).unwrap_or_default())
+                                 Some(state.registry.render_str(tmpl, &ctx).unwrap_or_default())
                              } else if let Some(path) = &on_chunk.template_path {
                                  Some(state.registry.tera.render(path, &ctx).unwrap_or_default())
                              } else {
@@ -553,7 +575,7 @@ pub async fn streaming_handler(
                              if let Some(fmt) = &stream_fmt {
                                  let mut chunk_ctx = ctx.clone();
                                  chunk_ctx.insert("chunk", &chunk);
-                                 Some(tera::Tera::one_off(fmt, &chunk_ctx, false).unwrap_or_else(|_| chunk.to_string()))
+                                 Some(state.registry.render_str(fmt, &chunk_ctx).unwrap_or_else(|_| chunk.to_string()))
                              } else {
                                  Some(chunk.to_string())
                              }
@@ -566,7 +588,7 @@ pub async fn streaming_handler(
                     if let Some(lc) = &lifecycle {
                          if let Some(on_stop) = &lc.on_stop {
                              if let Some(tmpl) = &on_stop.template_body {
-                                  Some(tera::Tera::one_off(tmpl, &ctx, false).unwrap_or_default())
+                                  Some(state.registry.render_str(tmpl, &ctx).unwrap_or_default())
                              } else if let Some(path) = &on_stop.template_path {
                                  Some(state.registry.tera.render(path, &ctx).unwrap_or_default())
                              } else { None }
@@ -687,6 +709,18 @@ fn extract_content_value(json_str: &str) -> (serde_json::Value, bool) {
                     if let Some(content) = message.get("content") {
                         return (content.clone(), false);
                     }
+                }
+            }
+        }
+        
+        // OpenAI Image generation format: data[0].b64_json or data[0].url
+        if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+            if let Some(first_item) = data.get(0) {
+                if let Some(b64_json) = first_item.get("b64_json") {
+                    return (b64_json.clone(), false);
+                }
+                if let Some(url) = first_item.get("url") {
+                    return (url.clone(), false);
                 }
             }
         }

@@ -1,3 +1,16 @@
 name: "openai-images"
 matcher: "^/v1/images/generations$"
 response_template: "openai/images_generations.json.j2"
+stream:
+  enabled: true
+  frame_format: raw
+  lifecycle:
+    on_chunk:
+      template_body: |
+        event: image_generation.partial_image
+        data: {"type":"image_generation.partial_image","b64_json":"{{ chunk }}","created_at":{{ timestamp() }},"size":"{{ json.size | default(value='1024x1024') }}","quality":"{{ json.quality | default(value='standard') }}","background":"{{ json.background | default(value='opaque') }}","output_format":"{{ json.output_format | default(value='jpeg') }}","partial_image_index":{{ chunk_index }}}
+    on_stop:
+      template_body: |
+        event: image_generation.completed
+        data: {"type":"image_generation.completed","b64_json":"{{ full_content }}","created_at":{{ timestamp() }},"size":"{{ json.size | default(value='1024x1024') }}","quality":"{{ json.quality | default(value='standard') }}","background":"{{ json.background | default(value='opaque') }}","output_format":"{{ json.output_format | default(value='jpeg') }}","usage":{"total_tokens":100,"input_tokens":50,"output_tokens":50,"input_tokens_details":{"text_tokens":10,"image_tokens":40}}}
+

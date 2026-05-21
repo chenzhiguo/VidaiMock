@@ -34,7 +34,7 @@ No configuration needed. These providers work immediately:
 | **OpenAI Chat** | `/v1/chat/completions` | ✅ |
 | **OpenAI Responses** | `/v1/responses` | ✅ (typed SSE events) |
 | **OpenAI Embeddings** | `/v1/embeddings` | — |
-| **OpenAI Images** | `/v1/images/generations` | — |
+| **OpenAI Images** | `/v1/images/generations` | ✅ (all 2 SSE event types) |
 | **OpenAI Moderations** | `/v1/moderations` | — |
 | **Anthropic** | `/v1/messages` | ✅ (all 7 SSE event types) |
 | **Gemini Generate** | `/v1beta/models/*:generateContent` | ✅ (text deltas + terminal `finishReason: STOP` chunk with `usageMetadata`, no `[DONE]`) |
@@ -64,18 +64,19 @@ Plus: Tool calling (OpenAI `tool_calls` + Anthropic `tool_use` + Gemini `functio
 
 ## 🛡️ Built for Vidai.Server
 
-VidaiMock is the official development environment for [Vidai.Server](https://vidai.uk)—the **High-Density Enterprise AI Gateway**. 
+VidaiMock is the official development environment for [Vidai.Server](https://vidai.uk)—the **High-Density Enterprise AI Gateway**.
 
 The same logic that powers VidaiMock's simulation of network jitter, latency, and failure modes is used in production to provide sovereign control planes for enterprise LLM infrastructure.
 
 ### 🌊 More than a Mock
+
 Unlike tools that just record and replay static data or intercept browser requests, **VidaiMock is a standalone Simulation Engine**. It emulates the exact wire-format and per-token timing of LLM streaming payloads, making it the perfect tool for testing streaming UI/UX and SDK resilience.
 
-*   **Truly Dynamic**: Every response is a Tera template. You can reflect request data, generate random IDs, or use complex logic to make your mock feel alive.
-*   **Physics-Accurate**: Emulates real-world network protocols (SSE, EventStream) and silver-level latency.
-*   **Error Path Testing**: Custom HTTP status codes via `status_code` in YAML (static or dynamic) and `X-Mock-Status` request header let you test upstream error handling — 400s, 401s, 404s, 429s, 500s — on any real provider endpoint without path rewriting.
-*   **Smart Branching**: Templates auto-detect OpenAI `tools`/`response_format`/o-series models, Anthropic `tools`, Gemini `functionDeclarations`, and tool-result presence in the message history — so agentic testing against ADK, LangGraph, and LangChain Runner loops terminates correctly instead of calling the mock forever.
-*   **Typed SSE Streaming**: Beyond plain `data:` chunks — supports OpenAI Responses API typed events (`response.output_text.delta`, etc.), Anthropic's 7-event lifecycle (`content_block_start`, `message_delta`, `ping`, etc.), Gemini's "text-delta chunks + terminal `finishReason` chunk" pattern, and `stream_options.include_usage` for final usage chunks.
+- **Truly Dynamic**: Every response is a Tera template. You can reflect request data, generate random IDs, or use complex logic to make your mock feel alive.
+- **Physics-Accurate**: Emulates real-world network protocols (SSE, EventStream) and silver-level latency.
+- **Error Path Testing**: Custom HTTP status codes via `status_code` in YAML (static or dynamic) and `X-Mock-Status` request header let you test upstream error handling — 400s, 401s, 404s, 429s, 500s — on any real provider endpoint without path rewriting.
+- **Smart Branching**: Templates auto-detect OpenAI `tools`/`response_format`/o-series models, Anthropic `tools`, Gemini `functionDeclarations`, and tool-result presence in the message history — so agentic testing against ADK, LangGraph, and LangChain Runner loops terminates correctly instead of calling the mock forever.
+- **Typed SSE Streaming**: Beyond plain `data:` chunks — supports OpenAI Responses API typed events (`response.output_text.delta`, etc.), Anthropic's 7-event lifecycle (`content_block_start`, `message_delta`, `ping`, etc.), Gemini's "text-delta chunks + terminal `finishReason` chunk" pattern, and `stream_options.include_usage` for final usage chunks.
 
 ### 🤖 Agentic Workflow Testing
 
@@ -154,12 +155,14 @@ cd vidaimock
 ```
 
 ### 🔐 Security Notice (macOS/Windows)
+
 Since VidaiMock is an open-source project, your OS may show a security warning:
 
-*   **macOS**: Run `xattr -d com.apple.quarantine vidaimock` in your terminal to allow the binary to run.
-*   **Windows**: Click "More info" in the SmartScreen popup and select "Run anyway".
+- **macOS**: Run `xattr -d com.apple.quarantine vidaimock` in your terminal to allow the binary to run.
+- **Windows**: Click "More info" in the SmartScreen popup and select "Run anyway".
 
 **Build from source**:
+
 ```bash
 git clone https://github.com/vidaiUK/VidaiMock.git
 cd vidaimock && cargo build --release
@@ -287,7 +290,7 @@ curl -H "X-Vidai-Chaos-Drop: 100" http://localhost:8100/v1/chat/completions \
 
 ## 📚 Documentation
 
-The documentation for VidaiMock is available at our [Documentation Site](https://vidai.uk/docs/mock/intro/). 
+The documentation for VidaiMock is available at our [Documentation Site](https://vidai.uk/docs/mock/intro/).
 
 For more information about Vidai, visit our [Home Page](https://Vidai.uk).
 
@@ -451,7 +454,7 @@ Apache 2.0 — See [LICENSE](LICENSE).
 
 ### 🌐 Looking for Centralized Test Infrastructure?
 
-VidaiMock runs locally, but we offer a managed control plane for enterprise teams. 
+VidaiMock runs locally, but we offer a managed control plane for enterprise teams.
 
 **[Get Started with Vidai Managed](https://vidai.uk)**
 
@@ -460,6 +463,7 @@ VidaiMock runs locally, but we offer a managed control plane for enterprise team
 ## 💜 Acknowledgments
 
 VidaiMock is built on the shoulders of giants in the Rust ecosystem:
+
 - [Axum](https://github.com/tokio-rs/axum) & [Tokio](https://github.com/tokio-rs/tokio) for the high-performance async foundation.
 - [Tera](https://github.com/Keats/tera) for the flexible templating engine.
 - [rust-embed](https://github.com/pyrossh/rust-embed) for the zero-config binary magic.

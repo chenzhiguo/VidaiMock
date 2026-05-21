@@ -27,6 +27,7 @@ use regex::Regex;
 use tera::Tera;
 use rand::Rng; // For random functions
 use rust_embed::RustEmbed;
+use base64::prelude::*;
 
 #[derive(RustEmbed)]
 #[folder = "config/"]
@@ -146,7 +147,33 @@ impl ProviderRegistry {
              Ok(tera::Value::from(val))
         });
 
+        let config_dir_clone = config_dir.to_path_buf();
+        tera.register_function("file_to_b64", move |args: &HashMap<String, tera::Value>| -> tera::Result<tera::Value> {
+            let path_arg = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| tera::Error::msg("Function 'file_to_b64' requires a 'path' argument"))?;
+            
+            // 1. Try to load from disk (relative to config_dir/templates/)
+            let disk_path = config_dir_clone.join("templates").join(path_arg);
+            if disk_path.exists() && disk_path.is_file() {
+                if let Ok(bytes) = std::fs::read(&disk_path) {
+                    let b64 = BASE64_STANDARD.encode(bytes);
+                    return Ok(tera::Value::String(b64));
+                }
+            }
+
+            // 2. Try to load from embedded Asset
+            let asset_path = format!("templates/{}", path_arg);
+            if let Some(content) = Asset::get(&asset_path) {
+                let b64 = BASE64_STANDARD.encode(content.data.as_ref());
+                return Ok(tera::Value::String(b64));
+            }
+
+            Err(tera::Error::msg(format!("File not found on disk or embedded: {}", path_arg)))
+        });
+
         // has_tool_result(messages=json.messages, provider="openai") -> bool
+
         //
         // Detects whether the request's conversation history already contains a
         // tool result. Templates use this to terminate agentic tool-calling
@@ -240,11 +267,16 @@ impl ProviderRegistry {
         // 1. Embedded templates
         for file in Asset::iter() {
             if file.starts_with("templates/") {
+                // Skip binary images
+                if file.ends_with(".jpg") || file.ends_with(".png") || file.ends_with(".jpeg") || file.ends_with(".webp") {
+                    continue;
+                }
                 if let Some(content) = Asset::get(&file) {
-                    let template_str = std::str::from_utf8(content.data.as_ref())?.to_string();
-                    let name = file["templates/".len()..].to_string();
-                    tracing::debug!("Found embedded template: {}", name);
-                    template_map.insert(name, template_str);
+                    if let Ok(template_str) = std::str::from_utf8(content.data.as_ref()) {
+                        let name = file["templates/".len()..].to_string();
+                        tracing::debug!("Found embedded template: {}", name);
+                        template_map.insert(name, template_str.to_string());
+                    }
                 }
             }
         }
@@ -255,11 +287,16 @@ impl ProviderRegistry {
             for entry in entries {
                 if let Ok(path) = entry {
                     if path.is_file() {
-                         let content = fs::read_to_string(&path)?;
-                         let rel_path = path.strip_prefix(config_dir.join("templates/"))?;
-                         let name = rel_path.to_str().ok_or("Invalid path")?.to_string();
-                         template_map.insert(name.clone(), content);
-                         tracing::debug!("Found disk template override: {}", name);
+                         let name_lossy = path.to_string_lossy();
+                         if name_lossy.ends_with(".jpg") || name_lossy.ends_with(".png") || name_lossy.ends_with(".jpeg") || name_lossy.ends_with(".webp") {
+                             continue;
+                         }
+                         if let Ok(content) = fs::read_to_string(&path) {
+                             let rel_path = path.strip_prefix(config_dir.join("templates/"))?;
+                             let name = rel_path.to_str().ok_or("Invalid path")?.to_string();
+                             template_map.insert(name.clone(), content);
+                             tracing::debug!("Found disk template override: {}", name);
+                         }
                     }
                 }
             }
@@ -357,7 +394,17 @@ impl ProviderRegistry {
 
     /// Renders an ad-hoc string using the registered Tera instance
     pub fn render_str(&self, template: &str, context: &tera::Context) -> tera::Result<String> {
-        tera::Tera::one_off(template, context, false)
+        // Use a unique inline template name to leverage the registry's Tera
+        // (which has custom functions like timestamp, uuid, etc.)
+        let name = format!("__inline_{:x}", {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            template.hash(&mut h);
+            h.finish()
+        });
+        let mut tera = (*self.tera).clone();
+        tera.add_raw_template(&name, template)?;
+        tera.render(&name, context)
     }
 }
 
