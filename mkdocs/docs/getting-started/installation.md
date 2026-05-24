@@ -4,11 +4,32 @@ title: Installation
 
 # Installation
 
-VidaiMock ships as a single static binary. Releases come bundled with the
-binary, the default provider configs, the bundled templates, and the
-examples folder.
+Three equal-status install paths — Docker, prebuilt binary, or build from
+source. Pick whichever fits your workflow.
 
-## Download a release
+## Docker (fastest start)
+
+Multi-arch image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25 MB.
+
+```bash
+docker pull ghcr.io/vidaiuk/vidaimock:latest
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+```
+
+The `config/` tree is embedded in the binary at compile time, so the image
+carries no on-disk config. Mount a directory at `/config` to override:
+
+```bash
+docker run --rm -p 8100:8100 \
+  -v "$PWD/my-config:/config:ro" \
+  ghcr.io/vidaiuk/vidaimock:latest \
+  --host 0.0.0.0 --port 8100 --config-dir /config
+```
+
+For CI use, pin to a specific digest for reproducibility — see
+[CI/CD Integration](../recipes/ci-cd.md).
+
+## Binary download
 
 Each archive extracts to a `vidaimock/` directory containing the binary plus
 `config/` and `examples/`.
@@ -77,7 +98,54 @@ compile time, so the binary works standalone with no files alongside it. A
 local `config/` directory or `--config-dir` only *overrides* the embedded
 defaults — see [Overriding bundled defaults](../configuration/overriding.md).
 
-## Verify
+## Verify release signatures (cosign)
+
+Every release artefact — the Docker image, the tarball, and the bare binary
+inside it — is signed with the Vidai release key, published at
+**<https://vidai.uk/.well-known/cosign.pub>**. The key is served over
+Vidai-controlled TLS, a separate trust path from GitHub and GHCR — an
+attacker who tampers with an artefact would also have to compromise
+`vidai.uk` to swap the trust anchor.
+
+=== "Verify the Docker image"
+
+    ```bash
+    cosign verify \
+      --key https://vidai.uk/.well-known/cosign.pub \
+      --insecure-ignore-tlog \
+      ghcr.io/vidaiuk/vidaimock:latest
+    ```
+
+=== "Verify a downloaded tarball"
+
+    ```bash
+    cosign verify-blob \
+      --key https://vidai.uk/.well-known/cosign.pub \
+      --insecure-ignore-tlog \
+      --bundle vidaimock-linux-x64.tar.gz.bundle \
+      vidaimock-linux-x64.tar.gz
+    ```
+
+=== "Verify the bare binary"
+
+    The binary's `.bundle` ships inside the tarball, so you can verify the
+    extracted binary even after deleting the archive.
+
+    ```bash
+    cosign verify-blob \
+      --key https://vidai.uk/.well-known/cosign.pub \
+      --insecure-ignore-tlog \
+      --bundle vidaimock.bundle \
+      vidaimock
+    ```
+
+The `--insecure-ignore-tlog` flag is required because VidaiMock does not
+publish to the Sigstore transparency log — the trust anchor is the
+keyed signature against the `vidai.uk` public key, not a public log
+entry. The flag name sounds scary but is correct for keyed (non-keyless)
+cosign flows.
+
+## Smoke check
 
 ```bash
 ./vidaimock --version

@@ -9,11 +9,14 @@ with OpenAI, Anthropic, Gemini, Bedrock, and more. Run ADK / LangGraph /
 LangChain agentic workflows against it without a single live-provider token.
 Zero config required.
 
-VidaiMock is a single ~7 MB Rust binary that emulates the **exact wire format**
-of production AI providers — including streaming physics, typed SSE events,
-tool-call shapes, and error envelopes — so SDK and integration tests pass
-against it the same way they would against the real APIs, deterministically
-and for free.
+VidaiMock ships as a signed multi-arch Docker image and a single ~7 MB Rust
+binary that emulates the **exact wire format** of production AI providers —
+including streaming physics, typed SSE events, tool-call shapes, and error
+envelopes — so SDK and integration tests pass against it the same way they
+would against the real APIs, deterministically and for free.
+
+[:fontawesome-brands-github: View on GitHub](https://github.com/vidaiUK/VidaiMock){ .md-button .md-button--primary }
+[:material-rocket-launch: Quickstart](getting-started/quickstart.md){ .md-button }
 
 !!! tip "Built for the Vidai AI Control Plane"
     VidaiMock is the simulation engine we use to validate the
@@ -24,12 +27,23 @@ and for free.
 
 ## 30-second demo
 
+**Docker:**
+
 ```bash
-# Download + unpack (macOS Apple Silicon shown — see Installation for others)
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+
+# In another terminal — note: no API key needed
+curl -N http://localhost:8100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+**Binary** (no Docker needed, macOS Apple Silicon shown — see
+[Installation](getting-started/installation.md) for other OSes):
+
+```bash
 curl -LO https://github.com/vidaiUK/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
 tar -xzf vidaimock-macos-arm64.tar.gz && cd vidaimock
-
-# Run
 ./vidaimock
 
 # In another terminal — note: no API key needed
@@ -64,6 +78,13 @@ static download.
   OpenAI-compatible shim
 - **Azure OpenAI, Bedrock, Vertex, Cohere, Mistral, Groq** — out of the box
 - **Error simulator** — any HTTP status, provider-shaped body
+- **Isolated mode** — lock the surface down to exactly what you declare in
+  `--config-dir`; bundled providers skip loading entirely. See
+  [Overriding bundled defaults → Isolated mode](configuration/overriding.md#isolated-mode).
+- **Signed releases** — every Docker image, tarball, and bare binary is
+  cosign-signed against the public key at
+  [vidai.uk/.well-known/cosign.pub](https://vidai.uk/.well-known/cosign.pub).
+  See [Installation → Verify](getting-started/installation.md#verify-release-signatures-cosign).
 
 Read the [Providers overview](providers/index.md) for the full endpoint table.
 
@@ -73,7 +94,7 @@ Read the [Providers overview](providers/index.md) for the full endpoint table.
 
 -   :material-download: **[Install](getting-started/installation.md)**
 
-    Grab the binary or build from source.
+    Pull the Docker image, grab the binary, or build from source.
 
 -   :material-rocket-launch: **[Quickstart](getting-started/quickstart.md)**
 
@@ -82,6 +103,10 @@ Read the [Providers overview](providers/index.md) for the full endpoint table.
 -   :material-robot: **[Agentic testing](agentic-testing.md)**
 
     Run ADK / LangGraph loops in CI with zero token spend.
+
+-   :material-pipe-leak: **[Run in CI](recipes/ci-cd.md)**
+
+    Docker-first CI pattern with digest pinning and cosign verification.
 
 -   :material-cog: **[Configuration](configuration/provider-config.md)**
 
