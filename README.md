@@ -51,7 +51,7 @@ Plus: Tool calling (OpenAI `tool_calls` + Anthropic `tool_use` + Gemini `functio
 
 ## ✨ Key Features
 
-- **🚀 Zero Config / Zero Fixtures**: Single **~7MB binary**, instant startup, no Docker/DB, and zero setup required.
+- **🚀 Zero Config / Zero Fixtures**: Single **~7MB binary** or signed Docker image, instant startup, no DB, and zero setup required.
 - **🌊 Physics-Accurate Streaming**: Realistic TTFT and token-by-token delivery with **provider-native streaming payloads** (OpenAI SSE, Responses API typed events, Anthropic EventStream, Gemini, etc.)
 - **⚡ High Performance**: 50,000+ RPS in benchmark mode
 - **🎛️ Chaos & Error Testing**: Inject failures, latency, malformed responses, and **custom HTTP status codes** (400, 401, 404, 429, 500, etc.) — every error returns a **provider-shaped JSON envelope** (OpenAI, Anthropic, Gemini)
@@ -125,8 +125,29 @@ curl -s http://localhost:8100/v1/chat/completions -H 'Content-Type: application/
 
 ## 📦 Installation
 
-**Download Bundled Release** (Recommended):
-Releases come bundled with the binary, default providers, templates, and usage examples.
+Three equal-status install paths — Docker, prebuilt binary, or build from source. Pick whichever fits your workflow.
+
+### 🐳 Docker (fastest start)
+
+Multi-arch image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25MB.
+
+```bash
+docker pull ghcr.io/vidaiuk/vidaimock:latest
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+```
+
+The `config/` tree is embedded in the binary at compile time, so the image carries no on-disk config. Mount a directory at `/config` to override:
+
+```bash
+docker run --rm -p 8100:8100 \
+  -v "$PWD/my-config:/config:ro" \
+  ghcr.io/vidaiuk/vidaimock:latest \
+  --host 0.0.0.0 --port 8100 --config-dir /config
+```
+
+### 📥 Binary download
+
+Each archive extracts to a `vidaimock/` directory with the binary plus bundled `config/` and `examples/`.
 
 ```bash
 # macOS Apple Silicon
@@ -153,18 +174,38 @@ cd vidaimock
 ./vidaimock
 ```
 
-### 🔐 Security Notice (macOS/Windows)
-Since VidaiMock is an open-source project, your OS may show a security warning:
+> **OS security notice (macOS/Windows):** the downloaded binary is not platform-code-signed (cosign signatures are separate — see below). On first run your OS may block it.
+> - **macOS**: `xattr -d com.apple.quarantine vidaimock`
+> - **Windows**: click *More info* in the SmartScreen dialog, then *Run anyway*
 
-*   **macOS**: Run `xattr -d com.apple.quarantine vidaimock` in your terminal to allow the binary to run.
-*   **Windows**: Click "More info" in the SmartScreen popup and select "Run anyway".
+### 🔨 Build from source
 
-**Build from source**:
 ```bash
 git clone https://github.com/vidaiUK/VidaiMock.git
-cd vidaimock && cargo build --release
+cd VidaiMock && cargo build --release
 ./target/release/vidaimock
 ```
+
+### 🔐 Verify release signatures (cosign)
+
+Every release artefact — the bare binary, the tarball, and the Docker image — is signed with the Vidai release key, published at **<https://vidai.uk/.well-known/cosign.pub>** (served over Vidai-controlled TLS, a separate trust path from GitHub and GHCR).
+
+```bash
+# Verify the Docker image
+cosign verify \
+  --key https://vidai.uk/.well-known/cosign.pub \
+  --insecure-ignore-tlog \
+  ghcr.io/vidaiuk/vidaimock:latest
+
+# Verify a downloaded tarball
+cosign verify-blob \
+  --key https://vidai.uk/.well-known/cosign.pub \
+  --insecure-ignore-tlog \
+  --bundle vidaimock-linux-x64.tar.gz.bundle \
+  vidaimock-linux-x64.tar.gz
+```
+
+See [SECURITY.md](SECURITY.md) for the full trust model.
 
 ## 🎮 Quick Examples
 
@@ -283,6 +324,14 @@ curl http://localhost:8100/v1/chat/completions \
 # Force chaos errors (test retry logic)
 curl -H "X-Vidai-Chaos-Drop: 100" http://localhost:8100/v1/chat/completions \
   -H "Content-Type: application/json" -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Isolated mode — production test rigs that serve ONLY what you declare.
+# Skips the bundled providers/templates entirely, so a missing or broken
+# custom config fails loudly instead of silently falling back. Useful for
+# CI rigs, security review, and locking the surface down to a known set.
+./vidaimock --config-dir ./my-config --isolated
+# -> Same as VIDAIMOCK_ISOLATED=true ./vidaimock --config-dir ./my-config
+# Full behaviour + gotchas: https://vidai.uk/docs/mock/configuration/overriding/#isolated-mode
 ```
 
 ## 📚 Documentation
