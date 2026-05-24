@@ -4,6 +4,21 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual dispatch — used to push a Docker-only RC image without
+  # re-running the whole Release pipeline. Pulls the linux binaries
+  # from an already-published tarball release rather than rebuilding.
+  # Does NOT move :latest (only the explicit `tag` input is pushed).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to push (e.g. 0.2.9-rc1). Does NOT move :latest.'
+        required: true
+        type: string
+      source_release:
+        description: 'Existing tarball release to source linux binaries from (e.g. v0.2.8).'
+        required: true
+        type: string
+        default: 'v0.2.8'
 
 permissions:
   contents: read
@@ -17,10 +32,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # release.yml runs in parallel on the same tag. We re-use its
-      # linux binaries rather than rebuilding inside docker, so wait
-      # for the two linux matrix jobs before pulling artifacts.
-      - name: Wait for release.yml linux builds
+      # Source binaries: tag-push uses release.yml's just-built artifacts;
+      # manual dispatch downloads them from a previously published release.
+      - name: Wait for release.yml linux builds (tag-push only)
+        if: github.event_name == 'push'
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
           ref: ${{ github.ref }}
@@ -28,19 +43,28 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 15
 
-      - name: Download linux tarballs
+      - name: Download linux tarballs from release.yml (tag-push only)
+        if: github.event_name == 'push'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: release.yml
           commit: ${{ github.sha }}
-          # Allow downloading from an in-progress workflow — Docker
-          # depends on the *linux jobs* finishing (enforced by the
-          # wait-on-check step above), not the whole Release workflow
-          # (which is still building Windows when we run).
           workflow_conclusion: ""
           name: vidaimock-linux-(x64|arm64)
           name_is_regexp: true
           path: dl
+
+      - name: Download linux tarballs from prior release (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_RELEASE: ${{ inputs.source_release }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl/vidaimock-linux-x64 dl/vidaimock-linux-arm64
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SOURCE_RELEASE}"
+          curl -sSLf -o dl/vidaimock-linux-x64/vidaimock-linux-x64.tar.gz "$base/vidaimock-linux-x64.tar.gz"
+          curl -sSLf -o dl/vidaimock-linux-arm64/vidaimock-linux-arm64.tar.gz "$base/vidaimock-linux-arm64.tar.gz"
+          ls -la dl/vidaimock-linux-x64 dl/vidaimock-linux-arm64
 
       - name: Stage binaries for buildx
         run: |
@@ -62,9 +86,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
+      - name: Determine image tags
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual dispatch: push ONLY the requested tag. Do NOT
+            # touch :latest — that's reserved for tag-driven stable
+            # releases. RC images stay scoped to their explicit tag.
+            echo "version=$MANUAL_TAG" >> "$GITHUB_OUTPUT"
+            {
+              echo "tags<<EOF"
+              echo "ghcr.io/vidaiuk/vidaimock:$MANUAL_TAG"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # Tag-driven release: push both the version tag AND :latest.
+            v="${GITHUB_REF_NAME#v}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            {
+              echo "tags<<EOF"
+              echo "ghcr.io/vidaiuk/vidaimock:$v"
+              echo "ghcr.io/vidaiuk/vidaimock:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       # provenance=false avoids the buildx attestation-manifest that
       # makes `cosign verify` against a tag fail. We sign by digest
@@ -78,9 +127,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          tags: |
-            ghcr.io/vidaiuk/vidaimock:${{ steps.ver.outputs.version }}
-            ghcr.io/vidaiuk/vidaimock:latest
+          tags: ${{ steps.ver.outputs.tags }}
 
       - name: Install cosign
         # cosign-installer v3.x cannot install cosign-the-tool v3.x
