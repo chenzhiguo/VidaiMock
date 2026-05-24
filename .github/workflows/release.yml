@@ -66,7 +66,10 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.3'
+          # v3.x has the `signing-config` subcommand we use to opt out of
+          # Rekor. v2.4.x rejected `signing-config` as an unknown command,
+          # so the workaround we need must run on v3+.
+          cosign-release: 'v3.0.6'
 
       # Build a no-Rekor signing config once per job — reused by the
       # binary-sign and tarball-sign steps below. cosign v2.5+ rejects

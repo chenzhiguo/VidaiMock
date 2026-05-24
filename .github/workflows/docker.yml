@@ -80,7 +80,10 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.3'
+          # v3.x has the `signing-config` subcommand we use to opt out of
+          # Rekor. v2.4.x rejected `signing-config` as an unknown command,
+          # so the workaround we need must run on v3+.
+          cosign-release: 'v3.0.6'
 
       # Sign the manifest-list digest, not the tag — tags are mutable.
       # No Rekor: our trust model is the committed cosign.pub.
