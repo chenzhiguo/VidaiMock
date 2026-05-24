@@ -27,16 +27,20 @@ would against the real APIs, deterministically and for free.
 
 ## 30-second demo
 
-**Docker:**
+**Docker Compose:**
 
 ```bash
-docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+docker compose up -d
 
-# In another terminal — note: no API key needed
+# No API key needed — VidaiMock ignores Authorization on mock routes.
 curl -N http://localhost:8100/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
+
+Full Docker flow — overrides, isolated mode, env vars:
+[Docker Compose recipe](recipes/docker-compose.md).
 
 **Binary** (no Docker needed, macOS Apple Silicon shown — see
 [Installation](getting-started/installation.md) for other OSes):

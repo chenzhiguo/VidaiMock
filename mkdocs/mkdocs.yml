@@ -103,6 +103,7 @@ nav:
       - Overriding Bundled Defaults: configuration/overriding.md
       - Writing Templates: configuration/templates.md
   - Recipes:
+      - Docker Compose: recipes/docker-compose.md
       - CI/CD Integration: recipes/ci-cd.md
       - Cookbook: recipes/cookbook.md
   - Reference:

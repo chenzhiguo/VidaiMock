@@ -7,24 +7,31 @@ title: Installation
 Three equal-status install paths — Docker, prebuilt binary, or build from
 source. Pick whichever fits your workflow.
 
-## Docker (fastest start)
+## Docker
 
-Multi-arch image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25 MB.
+Multi-arch signed image (`linux/amd64` + `linux/arm64`), distroless runtime,
+~25 MB.
 
-```bash
-docker pull ghcr.io/vidaiuk/vidaimock:latest
-docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
-```
+=== "Docker Compose (recommended)"
 
-The `config/` tree is embedded in the binary at compile time, so the image
-carries no on-disk config. Mount a directory at `/config` to override:
+    ```bash
+    curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+    docker compose up -d
+    curl http://localhost:8100/health    # {"status":"ok"}
+    ```
 
-```bash
-docker run --rm -p 8100:8100 \
-  -v "$PWD/my-config:/config:ro" \
-  ghcr.io/vidaiuk/vidaimock:latest \
-  --host 0.0.0.0 --port 8100 --config-dir /config
-```
+    Proper restart policy, override-friendly via `./overrides/` next to the
+    compose file, isolated-mode via one env var. See
+    [Docker Compose recipe](../recipes/docker-compose.md) for the full flow.
+
+=== "One-liner"
+
+    ```bash
+    docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+    ```
+
+    Throwaway; no overrides, no isolated mode. Useful for quick evaluation
+    only. For anything beyond `curl`-and-throw, use the compose flow above.
 
 For CI use, pin to a specific digest for reproducibility — see
 [CI/CD Integration](../recipes/ci-cd.md).

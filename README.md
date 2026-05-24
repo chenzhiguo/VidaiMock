@@ -9,12 +9,13 @@
 
 ## ⚡ 30-Second Demo
 
-**Docker:**
+**Docker Compose:**
 
 ```bash
-docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+docker compose up -d
 
-# (In another terminal) Test it!
+# Test it!
 curl -N http://localhost:8100/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'
@@ -137,22 +138,24 @@ curl -s http://localhost:8100/v1/chat/completions -H 'Content-Type: application/
 
 Three equal-status install paths — Docker, prebuilt binary, or build from source. Pick whichever fits your workflow.
 
-### 🐳 Docker (fastest start)
+### 🐳 Docker
 
-Multi-arch image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25MB.
+Multi-arch signed image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25 MB.
+
+**Recommended — Docker Compose** (proper restart policy, easy overrides, isolated-mode toggle):
 
 ```bash
-docker pull ghcr.io/vidaiuk/vidaimock:latest
-docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+docker compose up -d
+curl http://localhost:8100/health    # {"status":"ok"}
 ```
 
-The `config/` tree is embedded in the binary at compile time, so the image carries no on-disk config. Mount a directory at `/config` to override:
+That's the whole setup. The mock serves all bundled providers on port 8100 immediately. To override a provider or template, drop the file into `./overrides/` next to the compose file and `docker compose restart`. To lock the surface down to *only* your overrides, set `VIDAIMOCK_ISOLATED=true` in `.env`. Full flow: [docker/README.md](docker/README.md).
+
+**Quick one-liner** (throwaway, no compose, no overrides):
 
 ```bash
-docker run --rm -p 8100:8100 \
-  -v "$PWD/my-config:/config:ro" \
-  ghcr.io/vidaiuk/vidaimock:latest \
-  --host 0.0.0.0 --port 8100 --config-dir /config
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
 ```
 
 ### 📥 Binary download
