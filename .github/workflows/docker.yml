@@ -1,0 +1,110 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    name: Build, push & sign Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # release.yml runs in parallel on the same tag. We re-use its
+      # linux binaries rather than rebuilding inside docker, so wait
+      # for the two linux matrix jobs before pulling artifacts.
+      - name: Wait for release.yml linux builds
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-regexp: 'Build - (x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 15
+
+      - name: Download linux tarballs
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: release.yml
+          commit: ${{ github.sha }}
+          name: vidaimock-linux-(x64|arm64)
+          name_is_regexp: true
+          path: dl
+
+      - name: Stage binaries for buildx
+        run: |
+          set -euo pipefail
+          mkdir -p bin/linux-amd64 bin/linux-arm64 _tmp_x64 _tmp_arm64
+          tar -xzf dl/vidaimock-linux-x64/vidaimock-linux-x64.tar.gz       -C _tmp_x64
+          tar -xzf dl/vidaimock-linux-arm64/vidaimock-linux-arm64.tar.gz   -C _tmp_arm64
+          install -m 0755 _tmp_x64/vidaimock/vidaimock   bin/linux-amd64/vidaimock
+          install -m 0755 _tmp_arm64/vidaimock/vidaimock bin/linux-arm64/vidaimock
+          file bin/linux-amd64/vidaimock bin/linux-arm64/vidaimock
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # provenance=false avoids the buildx attestation-manifest that
+      # makes `cosign verify` against a tag fail. We sign by digest
+      # anyway; disabling provenance keeps tag-verify working too.
+      - name: Build & push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/vidaiuk/vidaimock:${{ steps.ver.outputs.version }}
+            ghcr.io/vidaiuk/vidaimock:latest
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      # Sign the manifest-list digest, not the tag — tags are mutable.
+      # No Rekor: our trust model is the committed cosign.pub.
+      - name: Sign image with cosign
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          KEY_FILE=$(mktemp)
+          chmod 600 "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$COSIGN_PRIVATE_KEY" > "$KEY_FILE"
+          cosign sign --yes --tlog-upload=false \
+            --key "$KEY_FILE" \
+            "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
+
+      - name: Verify signature (self-test)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify \
+            --key release-assets/cosign.pub \
+            --insecure-ignore-tlog \
+            "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
+          echo "Signed digest: ${DIGEST}"
