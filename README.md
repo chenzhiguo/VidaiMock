@@ -9,12 +9,22 @@
 
 ## ⚡ 30-Second Demo
 
+**Docker:**
+
 ```bash
-# Download and bundle (macOS Apple Silicon)
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+
+# (In another terminal) Test it!
+curl -N http://localhost:8100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+**Binary** (no Docker required, macOS Apple Silicon shown):
+
+```bash
 curl -LO https://github.com/vidaiUK/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
 tar -xzf vidaimock-macos-arm64.tar.gz && cd vidaimock
-
-# Run and enjoy!
 ./vidaimock
 
 # (In another terminal) Test it!
