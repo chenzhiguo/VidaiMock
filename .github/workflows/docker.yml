@@ -123,7 +123,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           cosign verify \
-            --key release-assets/cosign.pub \
+            --key https://vidai.uk/.well-known/cosign.pub \
             --insecure-ignore-tlog \
             "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
           echo "Signed digest: ${DIGEST}"

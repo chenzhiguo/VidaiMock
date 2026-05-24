@@ -133,7 +133,7 @@ jobs:
             cp "target/${TARGET}/release/vidaimock" "$PKG_DIR/"
             cp "target/${TARGET}/release/vidaimock.bundle" "$PKG_DIR/"
           fi
-          cp -r config examples README.md LICENSE CHANGELOG.md release-assets/cosign.pub "$PKG_DIR/"
+          cp -r config examples README.md LICENSE CHANGELOG.md "$PKG_DIR/"
           if [ "$RUNNER_OS_NAME" = "Windows" ]; then
             7z a "${ARTIFACT_NAME}.${ARCHIVE_EXT}" "$PKG_DIR/"
           else
