@@ -64,9 +64,10 @@ jobs:
           cargo build --release --target "$TARGET"
 
       - name: Install cosign
-        # The action is at v4 (cosign-installer v3.x cannot install
-        # cosign-the-tool v3.x — see v3.10.1 release notes).
-        uses: sigstore/cosign-installer@v4
+        # cosign-installer v3.x cannot install cosign-the-tool v3.x
+        # (see v3.10.1 release notes). Need v4.x of the action. There
+        # is no floating `v4` tag — pin to a specific release.
+        uses: sigstore/cosign-installer@v4.1.2
         with:
           # cosign-the-tool v3.x is required for the `signing-config`
           # subcommand. v2.4.x rejected `signing-config` as unknown.
