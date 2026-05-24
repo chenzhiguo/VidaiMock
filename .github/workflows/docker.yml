@@ -78,11 +78,12 @@ jobs:
             ghcr.io/vidaiuk/vidaimock:latest
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        # The action is at v4 (cosign-installer v3.x cannot install
+        # cosign-the-tool v3.x — see v3.10.1 release notes).
+        uses: sigstore/cosign-installer@v4
         with:
-          # v3.x has the `signing-config` subcommand we use to opt out of
-          # Rekor. v2.4.x rejected `signing-config` as an unknown command,
-          # so the workaround we need must run on v3+.
+          # cosign-the-tool v3.x is required for the `signing-config`
+          # subcommand. v2.4.x rejected `signing-config` as unknown.
           cosign-release: 'v3.0.6'
 
       # Sign the manifest-list digest, not the tag — tags are mutable.
