@@ -302,6 +302,9 @@ Options:
   -w, --workers <N>          Worker threads [default: num cpus]
   --config <FILE>            Config file path [default: mock-server.toml]
   --config-dir <DIR>         Custom provider configs directory (overlays bundled)
+  --isolated                 Ignore embedded providers/templates; only
+                             load --config-dir. Locks the surface down to
+                             exactly what you declare.
   --latency <MS>             Base response delay in milliseconds
   --mode <MODE>              benchmark | realistic | debug
   --endpoints <PATHS>        Comma-separated endpoints to serve (overrides config)

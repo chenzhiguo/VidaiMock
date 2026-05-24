@@ -17,6 +17,7 @@ Usage: vidaimock [OPTIONS]
 | `-w, --workers <N>` | num CPUs | Worker thread count. |
 | `--config <FILE>` | `mock-server.toml` | Config file path. |
 | `--config-dir <DIR>` | — | Directory of provider configs/templates that **overrides** the embedded defaults. See [Overriding](../configuration/overriding.md). |
+| `--isolated` | `false` | Ignore the binary's embedded providers and templates; only load `--config-dir`. Locks the surface down to exactly what you declare. Equivalent env var: `VIDAIMOCK_ISOLATED=true`. See [Isolated mode](../configuration/overriding.md#isolated-mode). |
 | `--latency <MS>` | `0` | Base artificial latency added to every request. |
 | `--mode <MODE>` | `benchmark` | `benchmark` (fastest), `realistic` (token pacing + TTFT), or `debug`. |
 | `--response-file <FILE>` | — | Custom response file overriding default-endpoint format. |

@@ -107,7 +107,26 @@ impl ProviderRegistry {
         }
     }
 
+    /// Backwards-compatible shim: load with the binary's embedded defaults
+    /// merged under the disk overlay. Equivalent to `load_from_dir_with_options(dir, false)`.
     pub fn load_from_dir(&mut self, config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        self.load_from_dir_with_options(config_dir, false)
+    }
+
+    /// Load provider configs and templates.
+    ///
+    /// When `isolated` is false (the default), the binary's embedded
+    /// `config/providers/*.yaml` and `config/templates/**/*.j2` are loaded
+    /// first, then anything in `config_dir` overlays them (disk wins).
+    ///
+    /// When `isolated` is true, the embedded layer is skipped entirely —
+    /// only `config_dir` contributes. Useful when the user wants to lock the
+    /// surface down to exactly what they declare (issue #6).
+    pub fn load_from_dir_with_options(
+        &mut self,
+        config_dir: &Path,
+        isolated: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let providers_pattern = config_dir.join("providers/*.yaml");
         // let templates_pattern = config_dir.join("templates/**/*");
 
@@ -237,14 +256,16 @@ impl ProviderRegistry {
         // a. Collect all templates (embedded first, then disk for overrides)
         let mut template_map = HashMap::new();
 
-        // 1. Embedded templates
-        for file in Asset::iter() {
-            if file.starts_with("templates/") {
-                if let Some(content) = Asset::get(&file) {
-                    let template_str = std::str::from_utf8(content.data.as_ref())?.to_string();
-                    let name = file["templates/".len()..].to_string();
-                    tracing::debug!("Found embedded template: {}", name);
-                    template_map.insert(name, template_str);
+        // 1. Embedded templates (skipped when isolated — user owns the surface)
+        if !isolated {
+            for file in Asset::iter() {
+                if file.starts_with("templates/") {
+                    if let Some(content) = Asset::get(&file) {
+                        let template_str = std::str::from_utf8(content.data.as_ref())?.to_string();
+                        let name = file["templates/".len()..].to_string();
+                        tracing::debug!("Found embedded template: {}", name);
+                        template_map.insert(name, template_str);
+                    }
                 }
             }
         }
@@ -304,14 +325,16 @@ impl ProviderRegistry {
             }
         }
 
-        // 2. Load embedded providers that were NOT on disk
-        for file in Asset::iter() {
-            if file.starts_with("providers/") && file.ends_with(".yaml") && !loaded_provider_names.contains(file.as_ref()) {
-                if let Some(content) = Asset::get(&file) {
-                    let config_str = std::str::from_utf8(content.data.as_ref())?;
-                    if let Ok(config) = serde_yaml::from_str::<ProviderConfig>(config_str) {
-                        tracing::debug!("Discovered embedded provider: {}", config.name);
-                        all_configs.push(config);
+        // 2. Load embedded providers that were NOT on disk (skipped when isolated)
+        if !isolated {
+            for file in Asset::iter() {
+                if file.starts_with("providers/") && file.ends_with(".yaml") && !loaded_provider_names.contains(file.as_ref()) {
+                    if let Some(content) = Asset::get(&file) {
+                        let config_str = std::str::from_utf8(content.data.as_ref())?;
+                        if let Ok(config) = serde_yaml::from_str::<ProviderConfig>(config_str) {
+                            tracing::debug!("Discovered embedded provider: {}", config.name);
+                            all_configs.push(config);
+                        }
                     }
                 }
             }
@@ -329,10 +352,24 @@ impl ProviderRegistry {
             self.providers.push(config);
         }
 
+        let mode_label = if isolated { "Disk only — embedded defaults disabled" } else { "Disk + Embedded" };
         if self.providers.is_empty() {
-            tracing::warn!("No providers found in configuration directory: {}", config_dir.display());
+            if isolated {
+                // Isolated mode + empty result is almost always a config mistake
+                // — embedded defaults aren't there to catch the user.
+                tracing::warn!(
+                    "No providers loaded from {} (isolated mode — embedded defaults disabled). \
+                     Every request will return 404 until you add a provider YAML.",
+                    config_dir.display()
+                );
+            } else {
+                tracing::warn!(
+                    "No providers found in configuration directory: {}",
+                    config_dir.display()
+                );
+            }
         } else {
-            tracing::info!("Registered {} providers (Disk + Embedded)", self.providers.len());
+            tracing::info!("Registered {} providers ({})", self.providers.len(), mode_label);
         }
         
         self.tera = Arc::new(tera);
@@ -361,9 +398,18 @@ impl ProviderRegistry {
     }
 }
 
+/// Default-mode init: load embedded defaults then overlay `config_path`.
+/// Kept as a thin wrapper for callers (and tests) that don't care about isolated mode.
+#[allow(dead_code)] // kept for API stability — the binary uses init_registry_with_options
 pub fn init_registry(config_path: &Path) -> Arc<ProviderRegistry> {
+    init_registry_with_options(config_path, false)
+}
+
+/// Init with explicit isolated flag. When `isolated = true`, embedded
+/// defaults are skipped and only `config_path` contributes.
+pub fn init_registry_with_options(config_path: &Path, isolated: bool) -> Arc<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();
-    if let Err(e) = registry.load_from_dir(config_path) {
+    if let Err(e) = registry.load_from_dir_with_options(config_path, isolated) {
         tracing::error!("Failed to load provider registry: {}", e);
     }
     Arc::new(registry)
@@ -418,6 +464,130 @@ response_template: "openai/chat.json.j2"
 
         // Clean up
         fs::remove_dir_all(temp_base).unwrap();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // --isolated mode (issue #6) — registry-level tests
+    //
+    // These tests build a temp config-dir and call load_from_dir_with_options
+    // both with isolated=false (the existing default) and isolated=true to
+    // prove the gating works exactly where intended.
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn fresh_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::current_dir().unwrap().join(format!("target/{}", name));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        fs::create_dir_all(dir.join("providers")).unwrap();
+        dir
+    }
+
+    /// isolated=true with one disk provider: only that provider is loaded;
+    /// none of the ~20 embedded providers are present.
+    #[test]
+    fn test_isolated_loads_only_disk_providers() {
+        let temp_base = fresh_temp_dir("test_isolated_loads_only_disk");
+        let only_provider = r#"
+name: "lonely-tenant"
+matcher: "^/lonely$"
+response_body: "{\"ok\":true}"
+"#;
+        fs::write(temp_base.join("providers/lonely.yaml"), only_provider).unwrap();
+
+        let mut registry = ProviderRegistry::new();
+        registry.load_from_dir_with_options(&temp_base, true).unwrap();
+
+        assert_eq!(registry.providers.len(), 1,
+            "isolated mode must load exactly the one disk provider, got {}",
+            registry.providers.len());
+        assert_eq!(registry.providers[0].name, "lonely-tenant");
+
+        // None of the bundled providers should be present.
+        for bundled_name in &["openai", "anthropic", "gemini", "openai-responses",
+                              "openai-moderations", "error-simulator"] {
+            assert!(
+                !registry.providers.iter().any(|p| p.name == *bundled_name),
+                "isolated mode must not load embedded provider '{}'", bundled_name
+            );
+        }
+
+        fs::remove_dir_all(temp_base).unwrap();
+    }
+
+    /// isolated=true with an empty config-dir: registry has zero providers
+    /// (server will 404 everything; the warn log line is fired by the
+    /// production code path).
+    #[test]
+    fn test_isolated_with_empty_dir_yields_zero_providers() {
+        let temp_base = fresh_temp_dir("test_isolated_empty_dir");
+        // Note: providers/ exists but is empty.
+
+        let mut registry = ProviderRegistry::new();
+        registry.load_from_dir_with_options(&temp_base, true).unwrap();
+
+        assert_eq!(registry.providers.len(), 0,
+            "isolated + empty dir must load zero providers (got {})",
+            registry.providers.len());
+        assert!(registry.find_provider("/v1/chat/completions").is_none(),
+            "no provider should match any path");
+
+        fs::remove_dir_all(temp_base).unwrap();
+    }
+
+    /// isolated=true: a disk provider that references a bundled template
+    /// (e.g. openai/chat.json.j2) renders unsuccessfully because the
+    /// template is not in the Tera registry. We assert the template is
+    /// not present — actual render is exercised end-to-end in server tests.
+    #[test]
+    fn test_isolated_does_not_load_embedded_templates() {
+        let temp_base = fresh_temp_dir("test_isolated_no_embedded_templates");
+        // Provider that references a known-bundled template (won't exist in isolated mode).
+        let provider_referencing_bundled = r#"
+name: "borrows-bundled"
+matcher: "^/borrows$"
+response_template: "openai/chat.json.j2"
+"#;
+        fs::write(temp_base.join("providers/borrows.yaml"), provider_referencing_bundled).unwrap();
+
+        let mut registry = ProviderRegistry::new();
+        registry.load_from_dir_with_options(&temp_base, true).unwrap();
+
+        // Provider loaded correctly...
+        assert_eq!(registry.providers.len(), 1);
+        // ...but Tera does NOT have the bundled template registered.
+        let mut ctx = tera::Context::new();
+        ctx.insert("model", &"test");
+        let render = registry.tera.render("openai/chat.json.j2", &ctx);
+        assert!(render.is_err(),
+            "isolated mode must not load embedded templates; \
+             render of bundled path should fail. Got: {:?}", render);
+
+        fs::remove_dir_all(temp_base).unwrap();
+    }
+
+    /// Confirm the non-isolated path is unchanged: default load brings in
+    /// embedded providers AND embedded templates (no regression).
+    #[test]
+    fn test_default_mode_still_loads_embedded() {
+        let mut registry = ProviderRegistry::new();
+        // Use a non-existent dir so only embedded contributes.
+        registry.load_from_dir_with_options(&PathBuf::from("non_existent_dir_default_check"), false).unwrap();
+
+        assert!(registry.providers.len() >= 15,
+            "default mode should load ~20 embedded providers; got {}", registry.providers.len());
+        let has_openai = registry.providers.iter().any(|p| p.name == "openai");
+        let has_anthropic = registry.providers.iter().any(|p| p.name == "anthropic");
+        assert!(has_openai && has_anthropic,
+            "default mode must include flagship embedded providers");
+
+        // Bundled template should be in Tera.
+        let mut ctx = tera::Context::new();
+        ctx.insert("model", &"test");
+        ctx.insert("json", &serde_json::json!({}));
+        let render = registry.tera.render("openai/chat.json.j2", &ctx);
+        assert!(render.is_ok(),
+            "default mode must register embedded templates");
     }
 
     // ─────────────────────────────────────────────────────────────────────

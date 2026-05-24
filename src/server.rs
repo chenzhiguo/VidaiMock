@@ -233,6 +233,7 @@ mod tests {
                 trickle_ms: 0,
                 disconnect_pct: 0.0,
             },
+            isolated: false,
         }
     }
 
@@ -1236,5 +1237,185 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_data_frames_are_single_line_json(&body_without_done, "openai stream+tools");
+    }
+
+    // ─── --isolated mode (issue #6) — end-to-end via HTTP ─────────────────
+    //
+    // These exercise the full request → match → render path with the binary
+    // configured in isolated mode. Complements the registry-level tests in
+    // provider.rs which prove the loader gating.
+
+    /// Build an isolated-mode AppState from a temp config-dir + a custom
+    /// provider with an inline `response_body` (no template lookup needed).
+    /// Returns the configured Router ready for `.oneshot()`.
+    async fn build_isolated_app(
+        test_dir_name: &str,
+        provider_yamls: &[(&str, &str)],  // (file_name, yaml_body)
+    ) -> (axum::Router, std::path::PathBuf) {
+        let dir = std::env::current_dir().unwrap()
+            .join(format!("target/test_isolated_e2e/{}", test_dir_name));
+        if dir.exists() { std::fs::remove_dir_all(&dir).unwrap(); }
+        std::fs::create_dir_all(dir.join("providers")).unwrap();
+        for (name, body) in provider_yamls {
+            std::fs::write(dir.join("providers").join(name), body).unwrap();
+        }
+
+        let mut config = get_test_config();
+        config.isolated = true;
+        config.config_dir = dir.clone();
+
+        let registry = crate::provider::init_registry_with_options(&dir, true);
+        let app = create_app(config, None, registry).await;
+        (app, dir)
+    }
+
+    /// /v1/models in isolated mode reflects ONLY user-loaded providers —
+    /// not the bundled ~20, and not a canned `gpt-4` fallback either.
+    #[tokio::test]
+    async fn test_isolated_models_endpoint_lists_only_user_providers() {
+        let (app, dir) = build_isolated_app(
+            "models_only_user",
+            &[("solo.yaml", "name: \"solo\"\nmatcher: \"^/solo$\"\nresponse_body: \"{}\"\n")],
+        ).await;
+
+        let resp = app.oneshot(
+            Request::builder().uri("/v1/models").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()
+        ).unwrap();
+
+        let ids: Vec<&str> = body["data"].as_array().unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["solo"],
+            "isolated /v1/models must list only user providers; got {:?}", ids);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Isolated + empty dir: /v1/models returns an empty list, NOT the
+    /// hard-coded gpt-4 fallback (which would mislead users who deliberately
+    /// locked the surface down).
+    #[tokio::test]
+    async fn test_isolated_models_endpoint_empty_dir_returns_empty_list() {
+        let (app, dir) = build_isolated_app("models_empty", &[]).await;
+
+        let resp = app.oneshot(
+            Request::builder().uri("/v1/models").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()
+        ).unwrap();
+
+        let list = body["data"].as_array().expect("data must be an array");
+        assert_eq!(list.len(), 0,
+            "isolated + empty dir must return an empty model list, not a fake gpt-4; got {:?}", list);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Bundled provider routes that previously worked (because of the
+    /// embedded openai.yaml) now 404 in isolated mode — and the 404 body
+    /// includes the isolated-mode hint so users can diagnose quickly.
+    #[tokio::test]
+    async fn test_isolated_bundled_routes_404_with_helpful_message() {
+        let (app, dir) = build_isolated_app("bundled_404",
+            &[("solo.yaml", "name: \"solo\"\nmatcher: \"^/solo$\"\nresponse_body: \"{}\"\n")],
+        ).await;
+
+        // /v1/chat/completions is a registered Axum route, but no provider
+        // matches it in isolated mode (we only registered /solo).
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from("{}")).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let text = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap().to_vec()
+        ).unwrap();
+        assert!(text.contains("isolated mode"),
+            "404 body should mention isolated mode to help users diagnose; got: {}", text);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Sanity: a user provider that doesn't reference any bundled template
+    /// (uses inline `response_body`) still serves successfully in isolated mode.
+    #[tokio::test]
+    async fn test_isolated_user_provider_serves_normally() {
+        let (app, dir) = build_isolated_app("user_serves",
+            &[("solo.yaml",
+               "name: \"solo\"\nmatcher: \"^/solo$\"\nresponse_body: '{\"hello\":\"world\"}'\n")],
+        ).await;
+
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/solo")
+                .header("content-type", "application/json")
+                .body(Body::from("{}")).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()
+        ).unwrap();
+        assert_eq!(body["hello"], "world");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Isolated mode's 404 hint differs from non-isolated; in default mode
+    /// the 404 says "no bundled or disk provider matches" (different hint).
+    /// Regression guard: non-isolated 404 still works and mentions /status.
+    #[tokio::test]
+    async fn test_non_isolated_404_message_unchanged() {
+        let app = create_app(get_test_config(), None, get_test_registry()).await;
+        // /unknown is not matched by the tiny test registry.
+        let resp = app.oneshot(
+            Request::builder().method("POST").uri("/totally/unknown/path")
+                .header("content-type", "application/json")
+                .body(Body::from("{}")).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let text = String::from_utf8(
+            axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap().to_vec()
+        ).unwrap();
+        // Default-mode 404 should NOT say "isolated mode".
+        assert!(!text.contains("isolated mode"),
+            "default-mode 404 must not mention isolated mode; got: {}", text);
+        assert!(text.contains("/status"),
+            "404 should suggest /status for diagnosis; got: {}", text);
+    }
+
+    /// /status JSON exposes the isolated flag so users can self-diagnose.
+    #[tokio::test]
+    async fn test_isolated_status_endpoint_exposes_flag() {
+        let (app, dir) = build_isolated_app("status_flag",
+            &[("solo.yaml", "name: \"solo\"\nmatcher: \"^/solo$\"\nresponse_body: \"{}\"\n")],
+        ).await;
+
+        let resp = app.oneshot(
+            Request::builder().uri("/status").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()
+        ).unwrap();
+        assert_eq!(body["isolated"], serde_json::json!(true),
+            "/status must expose isolated=true so users can confirm runtime mode");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Default mode /status still works and reports isolated=false.
+    #[tokio::test]
+    async fn test_default_mode_status_reports_isolated_false() {
+        let config = get_test_config();
+        let app = create_app(config, None, get_test_registry()).await;
+        let resp = app.oneshot(
+            Request::builder().uri("/status").body(Body::empty()).unwrap()
+        ).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()
+        ).unwrap();
+        assert_eq!(body["isolated"], serde_json::json!(false));
     }
 }
