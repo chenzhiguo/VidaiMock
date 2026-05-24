@@ -1,73 +1,42 @@
 # VidaiMock — Docker Compose setup.
 #
-# This file gives Docker users the same edit-and-iterate experience that
-# binary users get from the release tarball:
+# Just run `docker compose up`. The mock works out of the box with the
+# providers + templates embedded in the binary at compile time.
 #
-#   1. `docker compose up` — first run bootstraps ./config with the
-#      bundled providers + templates (download from the v0.2.8 release
-#      tarball, extract config/, copy to the host).
-#   2. Edit any YAML / template in ./config to customise behaviour.
-#   3. `docker compose restart` to apply.
+# To override anything, create an `./overrides` directory next to this
+# compose file and drop YAML / template files into it under the same
+# layout the binary uses internally:
 #
-# The bootstrap is idempotent: it skips work if ./config is already
-# populated, so subsequent `up` commands don't clobber user edits.
+#   ./overrides/
+#     providers/openai.yaml        ← shadows the embedded openai provider
+#     templates/openai/chat.json.j2  ← shadows the embedded chat template
 #
-# See ./README.md for the full flow, and
-# https://vidai.uk/docs/mock/configuration/overriding/ for the
-# additive-overlay + isolated-mode model.
+# To see what's bundled and pick something to copy + tweak, browse:
+#   https://github.com/vidaiUK/VidaiMock/tree/main/config
+#
+# To lock the surface down so ONLY ./overrides serves (skip embedded
+# entirely), set VIDAIMOCK_ISOLATED=true in .env.
+#
+# See ./README.md for the full flow.
 
 services:
-  # First-run only: extracts the bundled config/ tree to ./config so the
-  # user can edit YAMLs and templates locally with a normal text editor.
-  # Idempotent — runs every `up` but no-ops if ./config/.bootstrapped exists.
-  vidaimock-init:
-    image: curlimages/curl:8.10.1
-    restart: "no"
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        set -eu
-        if [ -f /config/.bootstrapped ]; then
-          echo "config bootstrap: ./config already populated, skipping."
-          exit 0
-        fi
-        version="${VIDAIMOCK_VERSION:-0.2.8}"
-        echo "config bootstrap: fetching vidaimock-linux-x64.tar.gz for v$${version}..."
-        cd /tmp
-        curl -sSLf -O "https://github.com/vidaiUK/VidaiMock/releases/download/v$${version}/vidaimock-linux-x64.tar.gz"
-        tar -xzf vidaimock-linux-x64.tar.gz vidaimock/config
-        # cp -a preserves perms; the dot copies dotfiles too.
-        cp -a vidaimock/config/. /config/
-        date -u +"bootstrapped from v$${version} at %Y-%m-%dT%H:%M:%SZ" > /config/.bootstrapped
-        echo "config bootstrap: ./config populated with bundled defaults."
-    volumes:
-      - ./config:/config
-
   vidaimock:
     image: ghcr.io/vidaiuk/vidaimock:${VIDAIMOCK_VERSION:-latest}
     restart: unless-stopped
-    depends_on:
-      vidaimock-init:
-        condition: service_completed_successfully
     ports:
       - "${VIDAIMOCK_PORT:-8100}:8100"
     volumes:
-      # Mount the bootstrapped config tree read-only. The binary reloads
-      # it on container start, so `docker compose restart` picks up edits.
-      - ./config:/config:ro
+      # User-created override directory. Empty/absent → batteries
+      # included. Drop YAMLs and templates here to override; same
+      # subpath layout as the bundled config tree on GitHub.
+      - ./overrides:/overrides:ro
     command:
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8100"
       - "--config-dir"
-      - "/config"
+      - "/overrides"
     environment:
-      # See .env.example for what these do. Defaults match the bundled
-      # batteries-included experience; nothing needs to be set.
-      # Latency is configured via the --latency CLI flag (added to the
-      # `command:` array above) or via mock-server.toml — env-var path
-      # is per-field nested (config crate quirk) and not worth the
-      # complexity here.
       VIDAIMOCK_LOG_LEVEL: "${VIDAIMOCK_LOG_LEVEL:-info}"
       VIDAIMOCK_ISOLATED: "${VIDAIMOCK_ISOLATED:-false}"
