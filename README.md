@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
-[Home Page](https://Vidai.uk) | [Documentation](https://vidai.uk/docs/mock/intro/)
+[Home Page](https://Vidai.uk) | [Documentation](https://docs.vidai.uk)
 
 **Batteries-included mock server for LLM APIs and agents** — works instantly with OpenAI, Anthropic, Gemini, Bedrock, and more. Run ADK / LangGraph / LangChain agentic workflows against it without a single live-provider token. Zero config required.
 
