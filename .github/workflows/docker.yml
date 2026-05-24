@@ -80,10 +80,15 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.1'
+          cosign-release: 'v2.4.3'
 
       # Sign the manifest-list digest, not the tag — tags are mutable.
       # No Rekor: our trust model is the committed cosign.pub.
+      #
+      # cosign v2.5+ rejects --tlog-upload=false when combined with the
+      # default signing-config. The portable workaround (same as the
+      # Vidai Deployment repo's scripts/cosign.sh) is to build a custom
+      # signing config with no Rekor URLs and pass --signing-config.
       - name: Sign image with cosign
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
@@ -92,10 +97,14 @@ jobs:
         run: |
           set -euo pipefail
           KEY_FILE=$(mktemp)
+          SIG_CFG=$(mktemp)
           chmod 600 "$KEY_FILE"
-          trap 'rm -f "$KEY_FILE"' EXIT
+          trap 'rm -f "$KEY_FILE" "$SIG_CFG"' EXIT
           printf '%s' "$COSIGN_PRIVATE_KEY" > "$KEY_FILE"
-          cosign sign --yes --tlog-upload=false \
+          cosign signing-config create --out "$SIG_CFG" >/dev/null
+          jq 'del(.rekorTlogUrls)' "$SIG_CFG" > "${SIG_CFG}.tmp" && mv "${SIG_CFG}.tmp" "$SIG_CFG"
+          cosign sign --yes \
+            --signing-config "$SIG_CFG" \
             --key "$KEY_FILE" \
             "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
 
