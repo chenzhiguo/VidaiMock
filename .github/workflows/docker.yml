@@ -33,6 +33,11 @@ jobs:
         with:
           workflow: release.yml
           commit: ${{ github.sha }}
+          # Skip any earlier failed runs for the same commit (can happen
+          # if a tag was deleted and re-pushed after fixing a workflow).
+          # The action's default picks the latest run regardless of
+          # conclusion; we want the latest *successful* run.
+          workflow_conclusion: success
           name: vidaimock-linux-(x64|arm64)
           name_is_regexp: true
           path: dl
