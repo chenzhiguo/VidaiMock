@@ -10,10 +10,6 @@
 #     ./release/vidaimock-linux-arm64/    (可选，用于 ARM64 架构)
 #   文件夹内应包含二进制文件 vidaimock
 #
-# 步骤：
-#   1. 用 docker/Dockerfile.from-release 从文件夹构建镜像
-#   2. 导出镜像 + 配置文件
-#
 # 用法：
 #   ./scripts/offline-package.sh [IMAGE_TAG]
 #
@@ -34,6 +30,17 @@ RELEASE_TARGET="${RELEASE_TARGET:-linux-x64}"
 
 cd "$ROOT_DIR"
 
+# 校验 RELEASE_TARGET
+case "$RELEASE_TARGET" in
+  linux-x64)   PLATFORM="linux/amd64" ;;
+  linux-arm64) PLATFORM="linux/arm64" ;;
+  *)
+    echo "❌ 不支持的 RELEASE_TARGET: $RELEASE_TARGET"
+    echo "   可选值: linux-x64, linux-arm64"
+    exit 1
+    ;;
+esac
+
 # 检查官方文件夹是否存在
 RELEASE_DIR="release/vidaimock-${RELEASE_TARGET}"
 if [ ! -f "$RELEASE_DIR/vidaimock" ]; then
@@ -53,27 +60,38 @@ if [ ! -f "$RELEASE_DIR/vidaimock" ]; then
   exit 1
 fi
 
-# ---- 步骤 1：构建 Docker 镜像 ----
-echo "==> [1/4] 从官方预编译文件夹构建 Docker 镜像: $IMAGE_FULL"
-echo "    来源: $RELEASE_DIR/vidaimock"
+mkdir -p "$DIST_DIR"
 
-# 为不同架构选择不同的 Dockerfile
-if [ "$RELEASE_TARGET" = "linux-arm64" ]; then
-  # 为 ARM64 做一个临时的 Dockerfile
-  cat > "$DIST_DIR/Dockerfile.tmp" << 'EOF'
-FROM --platform=linux/arm64 gcr.io/distroless/cc-debian12:nonroot
-COPY --chown=nonroot:nonroot release/vidaimock-linux-arm64 /vidaimock/
+# 生成与目标架构匹配的 Dockerfile（统一流程，避免两套逻辑）
+DOCKERFILE_GEN="$DIST_DIR/Dockerfile.from-release.gen"
+cat > "$DOCKERFILE_GEN" << EOF
+# syntax=docker/dockerfile:1.7
+# 自动生成，目标: $RELEASE_TARGET ($PLATFORM)
+
+FROM --platform=$PLATFORM busybox:stable AS fixperm
+COPY release/vidaimock-${RELEASE_TARGET} /vidaimock/
+RUN chmod 0755 /vidaimock/vidaimock && \\
+    find /vidaimock -type d -exec chmod 0755 {} \\; && \\
+    find /vidaimock -type f ! -name vidaimock -exec chmod 0644 {} \\;
+
+FROM --platform=$PLATFORM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=fixperm --chown=nonroot:nonroot /vidaimock /vidaimock
 WORKDIR /vidaimock
 EXPOSE 8100
 ENTRYPOINT ["/vidaimock/vidaimock"]
 CMD ["--host", "0.0.0.0", "--port", "8100"]
 EOF
-  mkdir -p "$DIST_DIR"
-  docker build -t "$IMAGE_FULL" -f "$DIST_DIR/Dockerfile.tmp" .
-  rm -f "$DIST_DIR/Dockerfile.tmp"
-else
-  docker build -t "$IMAGE_FULL" -f docker/Dockerfile.from-release .
-fi
+
+# ---- 步骤 1：构建 Docker 镜像 ----
+echo "==> [1/4] 从官方预编译文件夹构建 Docker 镜像: $IMAGE_FULL"
+echo "    来源: $RELEASE_DIR/vidaimock"
+echo "    平台: $PLATFORM"
+
+docker build \
+  -t "$IMAGE_FULL" \
+  -f "$DOCKERFILE_GEN" \
+  .
+rm -f "$DOCKERFILE_GEN"
 
 # ---- 步骤 2：准备打包目录 ----
 echo ""
@@ -83,11 +101,8 @@ mkdir -p "$DIST_DIR/package"
 echo "    导出 Docker 镜像..."
 docker save -o "$DIST_DIR/package/vidaimock-${IMAGE_TAG}.tar" "$IMAGE_FULL"
 
-# 复制 docker-compose 配置
-cp "$ROOT_DIR/docker/docker-compose.yml" "$DIST_DIR/package/"
-if [ -f "$ROOT_DIR/docker/docker-compose.local.yml" ]; then
-  cp "$ROOT_DIR/docker/docker-compose.local.yml" "$DIST_DIR/package/"
-fi
+# 复制内网专用 compose 配置（不拉取 ghcr.io、不 build）
+cp "$ROOT_DIR/docker/docker-compose.offline.yml" "$DIST_DIR/package/docker-compose.yml"
 
 # 复制环境变量模板
 if [ -f "$ROOT_DIR/docker/.env.example" ]; then
@@ -110,11 +125,7 @@ docker load -i "vidaimock-${IMAGE_TAG}.tar"
 
 echo ""
 echo "==> 启动服务"
-if [ -f docker-compose.local.yml ]; then
-  VIDAIMOCK_VERSION="$IMAGE_TAG" docker compose -f docker-compose.local.yml up -d
-else
-  VIDAIMOCK_VERSION="$IMAGE_TAG" docker compose up -d
-fi
+VIDAIMOCK_VERSION="$IMAGE_TAG" docker compose up -d
 
 echo ""
 echo "==> 等待服务启动..."
@@ -127,6 +138,7 @@ if curl -s "http://localhost:${PORT}/health" >/dev/null 2>&1; then
   echo "   健康检查: curl http://localhost:${PORT}/health"
 else
   echo "⚠️  请手动检查: curl http://localhost:${PORT}/health"
+  echo "   查看日志: docker compose logs"
 fi
 EOF
 chmod +x "$DIST_DIR/package/install.sh"
@@ -139,12 +151,11 @@ cat > "$DIST_DIR/package/README_OFFLINE.txt" << EOF
 
 版本: ${IMAGE_TAG}
 打包时间: $(date)
-构建来源: 官方预编译文件夹 ($RELEASE_TARGET)
+构建来源: 官方预编译文件夹 ($RELEASE_TARGET, $PLATFORM)
 
 文件列表:
   vidaimock-${IMAGE_TAG}.tar    Docker 镜像文件
-  docker-compose.yml            Docker Compose 配置
-  docker-compose.local.yml      本地构建配置（可选）
+  docker-compose.yml            Docker Compose 配置（内网专用，本地镜像）
   .env                          环境变量模板
   install.sh                    一键安装/启动脚本
 
@@ -167,16 +178,19 @@ cat > "$DIST_DIR/package/README_OFFLINE.txt" << EOF
    curl http://localhost:8100/health
 
 
-自定义配置:
+自定义配置（可选）:
 --------------------------------------------------------------------------------
-如需覆盖配置，创建 overrides 目录并放入配置文件：
+镜像内置了完整的 config/（在 /vidaimock/config）。如需覆盖某个 provider 或
+template，创建 overrides 目录并放入同路径文件：
 
   mkdir -p overrides/providers
   mkdir -p overrides/templates
   # 放入你的自定义配置...
 
-  然后重启服务:
-  docker compose restart
+  然后编辑 docker-compose.yml，在 command 里加上:
+    - "--config-dir"
+    - "/overrides"
+  之后重启: docker compose restart
 
 详细文档请参考原项目 README.md。
 

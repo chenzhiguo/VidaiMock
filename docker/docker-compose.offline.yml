@@ -1,0 +1,29 @@
+# VidaiMock — 内网离线部署专用 Docker Compose 配置
+#
+# 与官方 docker-compose.yml 的区别：
+#   - 使用本地加载的镜像（vidaimock:<tag>），不拉取 ghcr.io
+#   - 没有 build 块（内网无源码上下文）
+#   - 不强制 --config-dir（镜像内 /vidaimock 已带完整 config）
+#
+# 用法（内网）：
+#   docker load -i vidaimock-<tag>.tar
+#   VIDAIMOCK_VERSION=<tag> docker compose -f docker-compose.offline.yml up -d
+
+services:
+  vidaimock:
+    # 本地加载的镜像名（由 install.sh 通过 docker load 导入）
+    image: vidaimock:${VIDAIMOCK_VERSION:-local}
+    restart: unless-stopped
+    ports:
+      - "${VIDAIMOCK_PORT:-8100}:8100"
+    volumes:
+      # 可选：自定义配置覆盖目录。空/不存在 → 用镜像内置 config
+      - ./overrides:/overrides:ro
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8100"
+    environment:
+      VIDAIMOCK_LOG_LEVEL: "${VIDAIMOCK_LOG_LEVEL:-info}"
+      VIDAIMOCK_ISOLATED: "${VIDAIMOCK_ISOLATED:-false}"

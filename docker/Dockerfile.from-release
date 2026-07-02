@@ -10,16 +10,25 @@
 #   docker build -t vidaimock:local -f docker/Dockerfile.from-release .
 #
 
+# ---- 阶段 1：用带 shell 的镜像整理权限 ----
+# 用 busybox 而非 debian，镜像更小；glibc 兼容 distroless cc-debian12
+FROM --platform=linux/amd64 busybox:stable AS fixperm
+# 整个官方文件夹复制到 /vidaimock/
+COPY release/vidaimock-linux-x64 /vidaimock/
+# 强制保证二进制可执行，文档/配置可读
+RUN chmod 0755 /vidaimock/vidaimock && \
+    find /vidaimock -type d -exec chmod 0755 {} \; && \
+    find /vidaimock -type f ! -name vidaimock -exec chmod 0644 {} \;
+
+# ---- 阶段 2：最终运行时镜像 ----
 FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12:nonroot
 
-# 整个官方文件夹复制到 /vidaimock/ 下
-COPY --chown=nonroot:nonroot release/vidaimock-linux-x64 /vidaimock/
+# 从 fixperm 阶段复制权限已整理好的整个文件夹
+COPY --from=fixperm --chown=nonroot:nonroot /vidaimock /vidaimock
 
-# 工作目录设为 /vidaimock
 WORKDIR /vidaimock
 
 EXPOSE 8100
 
-# 直接用完整路径运行二进制
 ENTRYPOINT ["/vidaimock/vidaimock"]
 CMD ["--host", "0.0.0.0", "--port", "8100"]

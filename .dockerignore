@@ -1,8 +1,16 @@
-# 构建镜像时排除这些文件
+# 构建镜像时排除这些文件（不影响 release/ 下的官方文件夹）
+
 # macOS 系统文件
 **/.DS_Store
 
-# Docker 自身
-docker/
+# 构建产物与打包输出（避免污染构建上下文）
 dist/
+bin/
+target/
+
+# cosign 签名文件（内网无需）
 release/vidaimock-*/vidaimock.bundle
+
+# Git
+.git/
+.gitignore
