@@ -1,0 +1,15 @@
+name: openai-compatible
+# Catch-all for OpenAI-compatible clients. Lower priority than openai.yaml
+# so the exact-match provider with smart branching wins for /v1/chat/completions.
+matcher: "/v1/chat/completions"
+priority: -1
+request_mapping:
+  model: "{{ json.model | default(value='mock-model') }}"
+stream:
+  enabled: true
+  lifecycle:
+    on_chunk:
+      template_path: "config/templates/openai/stream_chunk.json.j2"
+    on_stop:
+      template_body: "[DONE]"
+response_template: "config/templates/openai/chat_completion.json.j2"

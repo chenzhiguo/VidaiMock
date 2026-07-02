@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+#
+# 完整构建版的 Dockerfile（从源码编译，不依赖预编译的 bin/）
+#
+# 适用场景：
+#   - Apple Silicon Mac 上无法用 cross 跨编译 x86_64 Linux 时
+#   - 不想提前在本机做跨平台编译
+#
+# 这个 Dockerfile 默认按宿主机架构构建。要构建特定架构请用：
+#   docker buildx build --platform linux/amd64 -t vidaimock:amd64 -f docker/Dockerfile.full-build . --load
+#   docker buildx build --platform linux/arm64 -t vidaimock:arm64 -f docker/Dockerfile.full-build . --load
+#
+# 单架构直接构建（最简单，推荐）：
+#   docker build -t vidaimock:local -f docker/Dockerfile.full-build .
+#
+FROM rust:1.70-slim-bookworm AS builder
+
+WORKDIR /app
+
+# 安装编译依赖
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 先复制 Cargo.toml 和 Cargo.lock，构建依赖层（缓存优化）
+COPY Cargo.toml Cargo.lock ./
+
+# 创建一个 dummy src/main.rs 来预构建依赖
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    cargo build --release && \
+    rm -rf src
+
+# 复制真正的源码（rust-embed 需要 config/ 在编译时存在）
+COPY src ./src
+COPY config ./config
+
+# 构建真正的二进制文件
+RUN cargo build --release
+
+# 运行时阶段：使用 distroless 镜像
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+COPY --from=builder --chown=nonroot:nonroot /app/target/release/vidaimock /usr/local/bin/vidaimock
+
+EXPOSE 8100
+
+ENTRYPOINT ["/usr/local/bin/vidaimock"]
+CMD ["--host", "0.0.0.0", "--port", "8100"]

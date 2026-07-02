@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+#
+# 从官方预编译的文件夹构建 Docker 镜像
+#
+# 前提条件：官方压缩包解压后的文件夹放在：
+#   ./release/vidaimock-linux-x64/    (默认，用于 x86_64 架构)
+#   或 ./release/vidaimock-linux-arm64/ (用于 ARM64 架构)
+#
+# 用法：
+#   docker build -t vidaimock:local -f docker/Dockerfile.from-release .
+#
+
+FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12:nonroot
+
+# 整个官方文件夹复制到 /vidaimock/ 下
+COPY --chown=nonroot:nonroot release/vidaimock-linux-x64 /vidaimock/
+
+# 工作目录设为 /vidaimock
+WORKDIR /vidaimock
+
+EXPOSE 8100
+
+# 直接用完整路径运行二进制
+ENTRYPOINT ["/vidaimock/vidaimock"]
+CMD ["--host", "0.0.0.0", "--port", "8100"]

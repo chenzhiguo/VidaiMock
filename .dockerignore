@@ -1,0 +1,8 @@
+# 构建镜像时排除这些文件
+# macOS 系统文件
+**/.DS_Store
+
+# Docker 自身
+docker/
+dist/
+release/vidaimock-*/vidaimock.bundle

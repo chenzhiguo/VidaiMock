@@ -1,0 +1,36 @@
+# VidaiMock — 本地构建版 Docker Compose 配置
+#
+# 与 docker-compose.yml 的区别：
+#   - 使用本地构建的二进制（bin/ 目录）构建镜像，而非从 GHCR 拉取
+#   - 适用于内网环境或本地开发
+#
+# 前置要求：
+#   先运行 ./scripts/build-binaries.sh 编译 Linux 二进制到 bin/ 目录
+#
+# 用法：
+#   ./scripts/build-binaries.sh
+#   VIDAIMOCK_VERSION=local docker compose -f docker/docker-compose.local.yml up -d
+
+services:
+  vidaimock:
+    # 本地构建的镜像名称
+    image: vidaimock:${VIDAIMOCK_VERSION:-local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${VIDAIMOCK_PORT:-8100}:8100"
+    volumes:
+      # 用户自定义配置覆盖目录
+      - ./overrides:/overrides:ro
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8100"
+      - "--config-dir"
+      - "/overrides"
+    environment:
+      VIDAIMOCK_LOG_LEVEL: "${VIDAIMOCK_LOG_LEVEL:-info}"
+      VIDAIMOCK_ISOLATED: "${VIDAIMOCK_ISOLATED:-false}"
