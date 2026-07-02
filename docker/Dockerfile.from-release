@@ -12,7 +12,7 @@
 
 # ---- 阶段 1：用带 shell 的镜像整理权限 ----
 # 用 busybox 而非 debian，镜像更小；glibc 兼容 distroless cc-debian12
-FROM --platform=linux/amd64 busybox:stable AS fixperm
+# FROM --platform=linux/amd64 busybox:stable AS fixperm
 # 整个官方文件夹复制到 /vidaimock/
 COPY release/vidaimock-linux-x64 /vidaimock/
 # 强制保证二进制可执行，文档/配置可读
