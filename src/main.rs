@@ -72,19 +72,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if config.log_level != "off" {
-        tracing::info!("VidaiMock Initialization (Workers: {}, Latency: {}ms, Mode: {})", 
-            workers, config.latency.base_ms, config.latency.mode);
+        let isolation_note = if config.isolated { " — ISOLATED (embedded defaults disabled)" } else { "" };
+        tracing::info!(
+            "VidaiMock Initialization (Workers: {}, Latency: {}ms, Mode: {}{})",
+            workers, config.latency.base_ms, config.latency.mode, isolation_note
+        );
 
-        // Diagnostic: List embedded assets
-        for file in crate::provider::Asset::iter() {
-            tracing::debug!("Embedded Asset: {}", file);
+        // Diagnostic: list embedded assets. Suppressed in isolated mode
+        // because they won't be loaded — printing them is misleading.
+        if !config.isolated {
+            for file in crate::provider::Asset::iter() {
+                tracing::debug!("Embedded Asset: {}", file);
+            }
         }
-        
+
         let endpoints: Vec<String> = config.endpoints.iter().map(|e| e.path.clone()).collect();
         info!(endpoints = ?endpoints, "Registered Endpoints");
     }
 
-    let registry = crate::provider::init_registry(&config.config_dir);
+    let registry = crate::provider::init_registry_with_options(&config.config_dir, config.isolated);
 
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers as usize)

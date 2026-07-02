@@ -1,0 +1,176 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual dispatch — used to push a Docker-only RC image without
+  # re-running the whole Release pipeline. Pulls the linux binaries
+  # from an already-published tarball release rather than rebuilding.
+  # Does NOT move :latest (only the explicit `tag` input is pushed).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to push (e.g. 0.2.9-rc1). Does NOT move :latest.'
+        required: true
+        type: string
+      source_release:
+        description: 'Existing tarball release to source linux binaries from (e.g. v0.2.8).'
+        required: true
+        type: string
+        default: 'v0.2.8'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    name: Build, push & sign Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Source binaries: tag-push uses release.yml's just-built artifacts;
+      # manual dispatch downloads them from a previously published release.
+      - name: Wait for release.yml linux builds (tag-push only)
+        if: github.event_name == 'push'
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.ref }}
+          check-regexp: 'Build - (x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 15
+
+      - name: Download linux tarballs from release.yml (tag-push only)
+        if: github.event_name == 'push'
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: release.yml
+          commit: ${{ github.sha }}
+          workflow_conclusion: ""
+          name: vidaimock-linux-(x64|arm64)
+          name_is_regexp: true
+          path: dl
+
+      - name: Download linux tarballs from prior release (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SOURCE_RELEASE: ${{ inputs.source_release }}
+        run: |
+          set -euo pipefail
+          mkdir -p dl/vidaimock-linux-x64 dl/vidaimock-linux-arm64
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SOURCE_RELEASE}"
+          curl -sSLf -o dl/vidaimock-linux-x64/vidaimock-linux-x64.tar.gz "$base/vidaimock-linux-x64.tar.gz"
+          curl -sSLf -o dl/vidaimock-linux-arm64/vidaimock-linux-arm64.tar.gz "$base/vidaimock-linux-arm64.tar.gz"
+          ls -la dl/vidaimock-linux-x64 dl/vidaimock-linux-arm64
+
+      - name: Stage binaries for buildx
+        run: |
+          set -euo pipefail
+          mkdir -p bin/linux-amd64 bin/linux-arm64 _tmp_x64 _tmp_arm64
+          tar -xzf dl/vidaimock-linux-x64/vidaimock-linux-x64.tar.gz       -C _tmp_x64
+          tar -xzf dl/vidaimock-linux-arm64/vidaimock-linux-arm64.tar.gz   -C _tmp_arm64
+          install -m 0755 _tmp_x64/vidaimock/vidaimock   bin/linux-amd64/vidaimock
+          install -m 0755 _tmp_arm64/vidaimock/vidaimock bin/linux-arm64/vidaimock
+          file bin/linux-amd64/vidaimock bin/linux-arm64/vidaimock
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual dispatch: push ONLY the requested tag. Do NOT
+            # touch :latest — that's reserved for tag-driven stable
+            # releases. RC images stay scoped to their explicit tag.
+            echo "version=$MANUAL_TAG" >> "$GITHUB_OUTPUT"
+            {
+              echo "tags<<EOF"
+              echo "ghcr.io/vidaiuk/vidaimock:$MANUAL_TAG"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            # Tag-driven release: push both the version tag AND :latest.
+            v="${GITHUB_REF_NAME#v}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            {
+              echo "tags<<EOF"
+              echo "ghcr.io/vidaiuk/vidaimock:$v"
+              echo "ghcr.io/vidaiuk/vidaimock:latest"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      # provenance=false avoids the buildx attestation-manifest that
+      # makes `cosign verify` against a tag fail. We sign by digest
+      # anyway; disabling provenance keeps tag-verify working too.
+      - name: Build & push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.ver.outputs.tags }}
+
+      - name: Install cosign
+        # cosign-installer v3.x cannot install cosign-the-tool v3.x
+        # (see v3.10.1 release notes). Need v4.x of the action. There
+        # is no floating `v4` tag — pin to a specific release.
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          # cosign-the-tool v3.x is required for the `signing-config`
+          # subcommand. v2.4.x rejected `signing-config` as unknown.
+          cosign-release: 'v3.0.6'
+
+      # Sign the manifest-list digest, not the tag — tags are mutable.
+      # No Rekor: our trust model is the committed cosign.pub.
+      #
+      # cosign v2.5+ rejects --tlog-upload=false when combined with the
+      # default signing-config. The portable workaround (same as the
+      # Vidai Deployment repo's scripts/cosign.sh) is to build a custom
+      # signing config with no Rekor URLs and pass --signing-config.
+      - name: Sign image with cosign
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          KEY_FILE=$(mktemp)
+          SIG_CFG=$(mktemp)
+          chmod 600 "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE" "$SIG_CFG"' EXIT
+          printf '%s' "$COSIGN_PRIVATE_KEY" > "$KEY_FILE"
+          cosign signing-config create --out "$SIG_CFG" >/dev/null
+          jq 'del(.rekorTlogUrls)' "$SIG_CFG" > "${SIG_CFG}.tmp" && mv "${SIG_CFG}.tmp" "$SIG_CFG"
+          cosign sign --yes \
+            --signing-config "$SIG_CFG" \
+            --key "$KEY_FILE" \
+            "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
+
+      - name: Verify signature (self-test)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify \
+            --key https://vidai.uk/.well-known/cosign.pub \
+            --insecure-ignore-tlog \
+            "ghcr.io/vidaiuk/vidaimock@${DIGEST}"
+          echo "Signed digest: ${DIGEST}"

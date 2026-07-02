@@ -162,7 +162,7 @@ fn resolve_status_code(
     }
 
     // 3. Query-param override — server-controlled via URL registered in a
-    // gateway's provider-config. Lets one URL be "broken" and another
+    // routing layer's provider-config. Lets one URL be "broken" and another
     // "healthy" without per-request header forwarding.
     if let Some(val) = query_params.get("chaos_status") {
         if let Ok(code) = val.parse::<u16>() {
@@ -327,8 +327,19 @@ pub async fn mock_handler(
         return response.into_response();
     }
 
-    // No matching provider found
-    (StatusCode::NOT_FOUND, "No provider matched this request route.").into_response()
+    // No matching provider found. Give the user a useful hint based on
+    // runtime state: in isolated mode the most likely cause is "the user
+    // forgot to put a provider in their config-dir"; in default mode it's
+    // usually "this path isn't a known endpoint".
+    let hint = if state.config.isolated {
+        " (isolated mode — only providers from --config-dir are loaded; check /status)"
+    } else {
+        " (no bundled or disk provider matches; check /status for the loaded set)"
+    };
+    (
+        StatusCode::NOT_FOUND,
+        format!("No provider matched this request route.{}", hint),
+    ).into_response()
 }
 
 pub async fn models_handler(
@@ -350,15 +361,10 @@ pub async fn models_handler(
         }));
     }
 
-    // Fallback to defaults if no providers loaded (shouldn't happen with embedded defaults)
-    if model_list.is_empty() {
-        model_list.push(serde_json::json!({
-            "id": "gpt-4",
-            "object": "model",
-            "created": 1687882411,
-            "owned_by": "openai"
-        }));
-    }
+    // Note: if the registry is empty (only possible in --isolated mode with
+    // a config-dir that has no providers), we return an empty list rather
+    // than a canned `gpt-4` entry — a hard-coded fake would mislead users
+    // who deliberately locked the surface down.
 
     let response_json = serde_json::json!({
         "object": "list",

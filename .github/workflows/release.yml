@@ -48,43 +48,132 @@ jobs:
 
       - name: Build with Cross
         if: matrix.use_cross
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           cargo install cross
-          cross build --release --target ${{ matrix.target }}
-          PKG_DIR="vidaimock"
-          mkdir -p $PKG_DIR
-          cp target/${{ matrix.target }}/release/vidaimock $PKG_DIR/
-          cp -r config examples README.md LICENSE CHANGELOG.md $PKG_DIR/
-          cp scripts/restart.sh scripts/stop.sh $PKG_DIR/
-          tar -czf ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} $PKG_DIR/
+          cross build --release --target "$TARGET"
 
       - name: Build with Cargo (non-cross)
         if: "!matrix.use_cross"
-        run: |
-          cargo build --release --target ${{ matrix.target }}
-          PKG_DIR="vidaimock"
-          mkdir -p $PKG_DIR
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/${{ matrix.target }}/release/vidaimock.exe $PKG_DIR/
-            cp -r config examples README.md LICENSE CHANGELOG.md $PKG_DIR/
-            cp scripts/restart.sh scripts/stop.sh $PKG_DIR/
-            7z a ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} $PKG_DIR/
-          else
-            cp target/${{ matrix.target }}/release/vidaimock $PKG_DIR/
-            cp -r config examples README.md LICENSE CHANGELOG.md $PKG_DIR/
-            cp scripts/restart.sh scripts/stop.sh $PKG_DIR/
-            tar -czf ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} $PKG_DIR/
-          fi
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo build --release --target "$TARGET"
 
-      - name: Generate Checksum
-        run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            certutil -hashfile ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} SHA256 | grep -v "hash" | head -n 1 > ${{ matrix.artifact_name }}.sha256
-          else
-            shasum -a 256 ${{ matrix.artifact_name }}.${{ matrix.archive_ext }} > ${{ matrix.artifact_name }}.sha256
-          fi
+      - name: Install cosign
+        # cosign-installer v3.x cannot install cosign-the-tool v3.x
+        # (see v3.10.1 release notes). Need v4.x of the action. There
+        # is no floating `v4` tag — pin to a specific release.
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          # cosign-the-tool v3.x is required for the `signing-config`
+          # subcommand. v2.4.x rejected `signing-config` as unknown.
+          cosign-release: 'v3.0.6'
+
+      # Build a no-Rekor signing config once per job — reused by the
+      # binary-sign and tarball-sign steps below. cosign v2.5+ rejects
+      # --tlog-upload=false combined with the default signing-config,
+      # so we follow the Vidai Deployment repo's workaround: emit a
+      # custom signing-config with no Rekor URLs and pass it via
+      # --signing-config.
+      - name: Prepare cosign signing config (no Rekor)
         shell: bash
+        run: |
+          set -euo pipefail
+          SIG_CFG="${RUNNER_TEMP}/cosign-signing-config-no-rekor.json"
+          cosign signing-config create --out "$SIG_CFG" >/dev/null
+          jq 'del(.rekorTlogUrls)' "$SIG_CFG" > "${SIG_CFG}.tmp" && mv "${SIG_CFG}.tmp" "$SIG_CFG"
+          echo "COSIGN_SIGNING_CONFIG=$SIG_CFG" >> "$GITHUB_ENV"
+
+      # Sign the bare binary FIRST, so its .bundle travels inside the
+      # tarball. Users who extract and keep only the binary can still
+      # verify with the .bundle that came alongside it.
+      - name: Sign bare binary
+        shell: bash
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          TARGET: ${{ matrix.target }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS_NAME" = "Windows" ]; then
+            BIN_PATH="target/${TARGET}/release/vidaimock.exe"
+          else
+            BIN_PATH="target/${TARGET}/release/vidaimock"
+          fi
+          KEY_FILE=$(mktemp)
+          chmod 600 "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$COSIGN_PRIVATE_KEY" > "$KEY_FILE"
+          cosign sign-blob --yes \
+            --signing-config "$COSIGN_SIGNING_CONFIG" \
+            --key "$KEY_FILE" \
+            --bundle "${BIN_PATH}.bundle" \
+            "$BIN_PATH"
+
+      - name: Package tarball
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          PKG_DIR="vidaimock"
+          mkdir -p "$PKG_DIR"
+          if [ "$RUNNER_OS_NAME" = "Windows" ]; then
+            cp "target/${TARGET}/release/vidaimock.exe" "$PKG_DIR/"
+            cp "target/${TARGET}/release/vidaimock.exe.bundle" "$PKG_DIR/"
+          else
+            cp "target/${TARGET}/release/vidaimock" "$PKG_DIR/"
+            cp "target/${TARGET}/release/vidaimock.bundle" "$PKG_DIR/"
+          fi
+          cp -r config examples README.md LICENSE CHANGELOG.md "$PKG_DIR/"
+          if [ -d "scripts" ]; then
+            cp scripts/restart.sh scripts/stop.sh "$PKG_DIR/" || true
+          fi
+          if [ "$RUNNER_OS_NAME" = "Windows" ]; then
+            7z a "${ARTIFACT_NAME}.${ARCHIVE_EXT}" "$PKG_DIR/"
+          else
+            tar -czf "${ARTIFACT_NAME}.${ARCHIVE_EXT}" "$PKG_DIR/"
+          fi
+
+      - name: Sign tarball
+        shell: bash
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+        run: |
+          set -euo pipefail
+          KEY_FILE=$(mktemp)
+          chmod 600 "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$COSIGN_PRIVATE_KEY" > "$KEY_FILE"
+          cosign sign-blob --yes \
+            --signing-config "$COSIGN_SIGNING_CONFIG" \
+            --key "$KEY_FILE" \
+            --bundle "${ARTIFACT_NAME}.${ARCHIVE_EXT}.bundle" \
+            "${ARTIFACT_NAME}.${ARCHIVE_EXT}"
+
+      - name: Generate checksum
+        shell: bash
+        env:
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+        run: |
+          if [ "$RUNNER_OS_NAME" = "Windows" ]; then
+            certutil -hashfile "${ARTIFACT_NAME}.${ARCHIVE_EXT}" SHA256 | grep -v "hash" | head -n 1 > "${ARTIFACT_NAME}.sha256"
+          else
+            shasum -a 256 "${ARTIFACT_NAME}.${ARCHIVE_EXT}" > "${ARTIFACT_NAME}.sha256"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -92,6 +181,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: |
             ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
+            ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}.bundle
             ${{ matrix.artifact_name }}.sha256
 
   release:

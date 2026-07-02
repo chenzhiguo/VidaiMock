@@ -1,0 +1,112 @@
+site_name: VidaiMock
+site_description: >-
+  Batteries-included mock server for LLM APIs and agents — OpenAI, Anthropic,
+  Gemini, Bedrock and more. Wire-shape-accurate, zero config, single binary.
+site_url: https://vidai.uk/docs/mock/
+repo_url: https://github.com/vidaiUK/VidaiMock
+repo_name: vidaiUK/VidaiMock
+copyright: Copyright &copy; 2025 Vidai UK — Apache 2.0
+
+# Docs live in this folder; site builds to ./site (gitignored).
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vidaiUK/VidaiMock
+    - icon: fontawesome/solid/globe
+      link: https://vidai.uk
+  generator: false
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - CLI & Headers Reference: getting-started/cli-reference.md
+  - Providers:
+      - Overview: providers/index.md
+      - OpenAI: providers/openai.md
+      - Anthropic: providers/anthropic.md
+      - Gemini: providers/gemini.md
+      - Other Providers: providers/others.md
+  - Features:
+      - Streaming: streaming.md
+      - Tool Calling: tool-calling.md
+      - Agentic Workflow Testing: agentic-testing.md
+      - Chaos & Error Injection: chaos-and-errors.md
+      - Templating: templating.md
+  - Configuration:
+      - Provider Config Reference: configuration/provider-config.md
+      - Overriding Bundled Defaults: configuration/overriding.md
+      - Writing Templates: configuration/templates.md
+  - Recipes:
+      - Docker Compose: recipes/docker-compose.md
+      - CI/CD Integration: recipes/ci-cd.md
+      - Cookbook: recipes/cookbook.md
+  - Reference:
+      - Architecture: reference/architecture.md
+      - Templates & Configs Catalogue: reference/templates-catalogue.md
+      - Changelog: reference/changelog.md

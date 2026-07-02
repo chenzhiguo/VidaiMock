@@ -3,18 +3,30 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 
-[Home Page](https://Vidai.uk) | [Documentation](https://vidai.uk/docs/mock/intro/)
+[Home Page](https://Vidai.uk) | [Documentation](https://docs.vidai.uk)
 
 **Batteries-included mock server for LLM APIs and agents** — works instantly with OpenAI, Anthropic, Gemini, Bedrock, and more. Run ADK / LangGraph / LangChain agentic workflows against it without a single live-provider token. Zero config required.
 
 ## ⚡ 30-Second Demo
 
+**Docker Compose:**
+
+```bash
+curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+docker compose up -d
+
+# Test it!
+curl -N http://localhost:8100/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4", "stream": true, "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+**Binary** (no Docker required, macOS Apple Silicon shown):
+
 ```bash
 # Download and bundle (macOS Apple Silicon)
-curl -LO https://github.com/chenzhiguo/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
+curl -LO https://github.com/vidaiUK/VidaiMock/releases/latest/download/vidaimock-macos-arm64.tar.gz
 tar -xzf vidaimock-macos-arm64.tar.gz && cd vidaimock
-
-# Run and enjoy!
 ./vidaimock
 
 # (In another terminal) Test it!
@@ -51,7 +63,7 @@ Plus: Tool calling (OpenAI `tool_calls` + Anthropic `tool_use` + Gemini `functio
 
 ## ✨ Key Features
 
-- **🚀 Zero Config / Zero Fixtures**: Single **~7MB binary**, instant startup, no Docker/DB, and zero setup required.
+- **🚀 Zero Config / Zero Fixtures**: Single **~7MB binary** or signed Docker image, instant startup, no DB, and zero setup required.
 - **🌊 Physics-Accurate Streaming**: Realistic TTFT and token-by-token delivery with **provider-native streaming payloads** (OpenAI SSE, Responses API typed events, Anthropic EventStream, Gemini, etc.)
 - **⚡ High Performance**: 50,000+ RPS in benchmark mode
 - **🎛️ Chaos & Error Testing**: Inject failures, latency, malformed responses, and **custom HTTP status codes** (400, 401, 404, 429, 500, etc.) — every error returns a **provider-shaped JSON envelope** (OpenAI, Anthropic, Gemini)
@@ -62,11 +74,11 @@ Plus: Tool calling (OpenAI `tool_calls` + Anthropic `tool_use` + Gemini `functio
 - **🔬 SDK-Level Wire Accuracy**: Streams survive strict SDK parsers end-to-end — `openai-python`, `anthropic`, `google-genai` all iterate the mock without hand-crafted compat shims. Text streaming, tool-call streaming, and agentic-loop streaming all emit single-line SSE JSON with correct typed events. Regression-tested byte-level against captured real-provider wire format.
 - **📝 Customizable**: YAML configs + Tera templates for any API
 
-## 🛡️ Built for Vidai.Server
+## 🛡️ Built for the Vidai AI Control Plane
 
-VidaiMock is the official development environment for [Vidai.Server](https://vidai.uk)—the **High-Density Enterprise AI Gateway**.
+VidaiMock is the official development environment for the [Vidai AI Control Plane](https://vidai.uk) — a high-density, enterprise-grade control plane for LLM infrastructure.
 
-The same logic that powers VidaiMock's simulation of network jitter, latency, and failure modes is used in production to provide sovereign control planes for enterprise LLM infrastructure.
+The same logic that powers VidaiMock's simulation of network jitter, latency, and failure modes is used in production to keep the Vidai Control Plane resilient for enterprise LLM infrastructure.
 
 ### 🌊 More than a Mock
 
@@ -126,8 +138,31 @@ curl -s http://localhost:8100/v1/chat/completions -H 'Content-Type: application/
 
 ## 📦 Installation
 
-**Download Bundled Release** (Recommended):
-Releases come bundled with the binary, default providers, templates, and usage examples.
+Three equal-status install paths — Docker, prebuilt binary, or build from source. Pick whichever fits your workflow.
+
+### 🐳 Docker
+
+Multi-arch signed image (`linux/amd64` + `linux/arm64`), distroless runtime, ~25 MB.
+
+**Recommended — Docker Compose** (proper restart policy, easy overrides, isolated-mode toggle):
+
+```bash
+curl -O https://raw.githubusercontent.com/vidaiUK/VidaiMock/main/docker/docker-compose.yml
+docker compose up -d
+curl http://localhost:8100/health    # {"status":"ok"}
+```
+
+That's the whole setup. The mock serves all bundled providers on port 8100 immediately. To override a provider or template, drop the file into `./overrides/` next to the compose file and `docker compose restart`. To lock the surface down to *only* your overrides, set `VIDAIMOCK_ISOLATED=true` in `.env`. Full flow: [docker/README.md](docker/README.md).
+
+**Quick one-liner** (throwaway, no compose, no overrides):
+
+```bash
+docker run --rm -p 8100:8100 ghcr.io/vidaiuk/vidaimock:latest
+```
+
+### 📥 Binary download
+
+Each archive extracts to a `vidaimock/` directory with the binary plus bundled `config/` and `examples/`.
 
 ```bash
 # macOS Apple Silicon
@@ -154,20 +189,37 @@ cd vidaimock
 ./vidaimock
 ```
 
-### 🔐 Security Notice (macOS/Windows)
+> **OS security notice (macOS/Windows):** the downloaded binary is not platform-code-signed (cosign signatures are separate — see below). On first run your OS may block it.
+> - **macOS**: `xattr -d com.apple.quarantine vidaimock`
+> - **Windows**: click *More info* in the SmartScreen dialog, then *Run anyway*
 
-Since VidaiMock is an open-source project, your OS may show a security warning:
-
-- **macOS**: Run `xattr -d com.apple.quarantine vidaimock` in your terminal to allow the binary to run.
-- **Windows**: Click "More info" in the SmartScreen popup and select "Run anyway".
-
-**Build from source**:
-
+### 🔨 Build from source
 ```bash
 git clone https://github.com/vidaiUK/VidaiMock.git
-cd vidaimock && cargo build --release
+cd VidaiMock && cargo build --release
 ./target/release/vidaimock
 ```
+
+### 🔐 Verify release signatures (cosign)
+
+Every release artefact — the bare binary, the tarball, and the Docker image — is signed with the Vidai release key, published at **<https://vidai.uk/.well-known/cosign.pub>** (served over Vidai-controlled TLS, a separate trust path from GitHub and GHCR).
+
+```bash
+# Verify the Docker image
+cosign verify \
+  --key https://vidai.uk/.well-known/cosign.pub \
+  --insecure-ignore-tlog \
+  ghcr.io/vidaiuk/vidaimock:latest
+
+# Verify a downloaded tarball
+cosign verify-blob \
+  --key https://vidai.uk/.well-known/cosign.pub \
+  --insecure-ignore-tlog \
+  --bundle vidaimock-linux-x64.tar.gz.bundle \
+  vidaimock-linux-x64.tar.gz
+```
+
+See [SECURITY.md](SECURITY.md) for the full trust model.
 
 ## 🎮 Quick Examples
 
@@ -238,8 +290,8 @@ curl -H "X-Mock-Status: 429" http://localhost:8100/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
 
 # ?chaos_status=503 URL query — stateless per-URL chaos.
-# Lets a gateway register one "broken" endpoint and one "healthy" endpoint
-# against the same mock instance for fallback/circuit-breaker testing.
+# Lets your routing layer register one "broken" endpoint and one "healthy"
+# endpoint against the same mock instance for fallback/circuit-breaker testing.
 curl "http://localhost:8100/v1/chat/completions?chaos_status=503" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
@@ -286,6 +338,14 @@ curl http://localhost:8100/v1/chat/completions \
 # Force chaos errors (test retry logic)
 curl -H "X-Vidai-Chaos-Drop: 100" http://localhost:8100/v1/chat/completions \
   -H "Content-Type: application/json" -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}'
+
+# Isolated mode — production test rigs that serve ONLY what you declare.
+# Skips the bundled providers/templates entirely, so a missing or broken
+# custom config fails loudly instead of silently falling back. Useful for
+# CI rigs, security review, and locking the surface down to a known set.
+./vidaimock --config-dir ./my-config --isolated
+# -> Same as VIDAIMOCK_ISOLATED=true ./vidaimock --config-dir ./my-config
+# Full behaviour + gotchas: https://vidai.uk/docs/mock/configuration/overriding/#isolated-mode
 ```
 
 ## 📚 Documentation
@@ -305,6 +365,9 @@ Options:
   -w, --workers <N>          Worker threads [default: num cpus]
   --config <FILE>            Config file path [default: mock-server.toml]
   --config-dir <DIR>         Custom provider configs directory (overlays bundled)
+  --isolated                 Ignore embedded providers/templates; only
+                             load --config-dir. Locks the surface down to
+                             exactly what you declare.
   --latency <MS>             Base response delay in milliseconds
   --mode <MODE>              benchmark | realistic | debug
   --endpoints <PATHS>        Comma-separated endpoints to serve (overrides config)
@@ -397,7 +460,7 @@ the same `error_template` pipeline:
 
 | Trigger | Scope | Use case |
 |---|---|---|
-| `?chaos_status=503` URL query | Per URL | Gateway registers one "broken" and one "healthy" endpoint against the same mock instance — fallback/circuit-breaker testing |
+| `?chaos_status=503` URL query | Per URL | Your routing layer registers one "broken" and one "healthy" endpoint against the same mock instance — fallback/circuit-breaker testing |
 | `X-Mock-Status: 429` header | Per request | SDK-level test wants a specific status on a real provider route |
 | `X-Vidai-Chaos-Drop: 100` header | Probabilistic | Chaos testing; returns provider-shaped 500 JSON |
 | Provider `status_code` Tera expression | Per request field | Request validation (e.g. Anthropic's `max_tokens` requirement) |

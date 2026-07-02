@@ -4,18 +4,26 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.2.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities to: **security@vidai.uk**
+Vidai's security disclosure entry point is:
+
+**<https://vidai.uk/.well-known/security.txt>** (RFC 9116)
+
+That file is the canonical, machine-readable place we publish current
+contact details, response expectations, and our PGP key. Always check
+it for the latest information.
 
 **Do NOT create public GitHub issues for security vulnerabilities.**
 
-### Response Timeline
-- **Initial response**: 48 hours
-- **Assessment**: 7 days
-- **Fix timeline**: Depends on severity
+## Release verification
+
+Every VidaiMock release (binary, tarball, Docker image) is signed
+with the Vidai cosign release key. The trust anchor is published at
+**<https://vidai.uk/.well-known/cosign.pub>** — fetch from there and
+verify with `cosign verify` / `cosign verify-blob`.
 
 ## Security Features
 

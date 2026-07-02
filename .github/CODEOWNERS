@@ -1,0 +1,10 @@
+# CODEOWNERS — workflow files require Nagu review.
+#
+# Rationale: COSIGN_PRIVATE_KEY + COSIGN_PASSWORD are repo Actions
+# secrets. A malicious step added to any workflow file in a PR would
+# have access to them once merged. Requiring an explicit review on
+# every workflow change is the standing control that makes the
+# direct-GitHub-Secrets signing model acceptable.
+
+/.github/workflows/   @nagug
+/.github/CODEOWNERS   @nagug

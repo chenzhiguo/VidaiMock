@@ -38,6 +38,12 @@ pub struct AppConfig {
     pub endpoints: Vec<EndpointConfig>,
     #[serde(skip)]
     pub response_file: Option<PathBuf>,
+    /// When true, the binary's embedded provider configs and templates are
+    /// ignored entirely; only `config_dir` is loaded. Lets users lock down the
+    /// surface to exactly what they declare. Default false preserves the
+    /// batteries-included experience.
+    #[serde(default)]
+    pub isolated: bool,
 }
 
 fn default_host() -> String {
@@ -114,6 +120,12 @@ pub struct Cli {
     /// Override Content-Type header (e.g. application/xml)
     #[arg(long)]
     pub content_type: Option<String>,
+
+    /// Ignore the binary's embedded provider configs and templates.
+    /// Only `--config-dir` is loaded — lets you lock the surface down to
+    /// exactly what you declare. Equivalent env var: `VIDAIMOCK_ISOLATED=true`.
+    #[arg(long)]
+    pub isolated: bool,
 }
 
 impl AppConfig {
@@ -161,7 +173,13 @@ impl AppConfig {
         if let Some(dir) = args.config_dir {
             config.config_dir = dir;
         }
-        
+        // Bool flag: can only enable from CLI. To disable, omit the flag.
+        // Env var (VIDAIMOCK_ISOLATED) and TOML (`isolated = true`) work via
+        // serde defaults above.
+        if args.isolated {
+            config.isolated = true;
+        }
+
         config.response_file = args.response_file;
 
         // If endpoints provided via CLI, we construct a simple config where all endpoints use the specified (or default "openai") format
@@ -265,5 +283,23 @@ mod tests {
         assert_eq!(config.endpoints[0].format, "openai");
         assert_eq!(config.endpoints[1].path, "/v1/test");
         assert_eq!(config.endpoints[1].format, "echo");
+    }
+
+    /// --isolated absent → field defaults to false (no behaviour change for
+    /// any existing user).
+    #[test]
+    fn test_isolated_defaults_to_false() {
+        let args = Cli::parse_from(&["mock-server"]);
+        let config = AppConfig::build_config(args).unwrap();
+        assert!(!config.isolated, "isolated must default to false");
+    }
+
+    /// --isolated present → field becomes true (overrides any file/env value
+    /// that was false; CLI flag wins).
+    #[test]
+    fn test_isolated_cli_flag_enables() {
+        let args = Cli::parse_from(&["mock-server", "--isolated"]);
+        let config = AppConfig::build_config(args).unwrap();
+        assert!(config.isolated, "--isolated must enable the flag");
     }
 }

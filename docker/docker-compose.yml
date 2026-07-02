@@ -1,0 +1,42 @@
+# VidaiMock — Docker Compose setup.
+#
+# Just run `docker compose up`. The mock works out of the box with the
+# providers + templates embedded in the binary at compile time.
+#
+# To override anything, create an `./overrides` directory next to this
+# compose file and drop YAML / template files into it under the same
+# layout the binary uses internally:
+#
+#   ./overrides/
+#     providers/openai.yaml        ← shadows the embedded openai provider
+#     templates/openai/chat.json.j2  ← shadows the embedded chat template
+#
+# To see what's bundled and pick something to copy + tweak, browse:
+#   https://github.com/vidaiUK/VidaiMock/tree/main/config
+#
+# To lock the surface down so ONLY ./overrides serves (skip embedded
+# entirely), set VIDAIMOCK_ISOLATED=true in .env.
+#
+# See ./README.md for the full flow.
+
+services:
+  vidaimock:
+    image: ghcr.io/vidaiuk/vidaimock:${VIDAIMOCK_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "${VIDAIMOCK_PORT:-8100}:8100"
+    volumes:
+      # User-created override directory. Empty/absent → batteries
+      # included. Drop YAMLs and templates here to override; same
+      # subpath layout as the bundled config tree on GitHub.
+      - ./overrides:/overrides:ro
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8100"
+      - "--config-dir"
+      - "/overrides"
+    environment:
+      VIDAIMOCK_LOG_LEVEL: "${VIDAIMOCK_LOG_LEVEL:-info}"
+      VIDAIMOCK_ISOLATED: "${VIDAIMOCK_ISOLATED:-false}"
